@@ -1,25 +1,21 @@
-"""La API no expone rutas fuera de contracts/openapi.yaml, ni le faltan rutas del contrato."""
+"""La API no expone rutas fuera de contracts/openapi.yaml.
 
-from typing import Any
-
-import yaml
+El contrato de una fase se aprueba antes de implementarla, así que puede tener operaciones que la
+app aún no sirve; lo que nunca puede pasar es lo contrario.
+"""
 
 from app.main import create_app
-from tests.conftest import CONTRACT_PATH
-
-HTTP_METHODS = {"get", "post", "put", "patch", "delete"}
+from tests.conftest import app_operations, contract_operations
 
 
-def _operations(spec: dict[str, Any]) -> set[tuple[str, str, str]]:
-    return {
-        (method, path, op["operationId"])
-        for path, item in spec["paths"].items()
-        for method, op in item.items()
-        if method in HTTP_METHODS
-    }
+def test_app_has_no_routes_outside_contract() -> None:
+    extra = app_operations(create_app()) - contract_operations()
+
+    assert not extra, f"Rutas fuera del contrato: {sorted(extra)}"
 
 
-def test_app_routes_match_contract() -> None:
-    contract = yaml.safe_load(CONTRACT_PATH.read_text(encoding="utf-8"))
+def test_health_is_implemented() -> None:
+    implemented = app_operations(create_app())
 
-    assert _operations(create_app().openapi()) == _operations(contract)
+    assert ("get", "/health", "getHealth") in implemented
+    assert ("get", "/health/ready", "getReadiness") in implemented
