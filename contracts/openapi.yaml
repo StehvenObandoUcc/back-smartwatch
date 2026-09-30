@@ -2,6 +2,7 @@ openapi: 3.1.0
 info:
   title: API de recordatorios de medicamentos
   version: 0.2.0
+  x-closed-phase: 0
   description: |
     Contrato de la API. Fuente de verdad del backend y de los clientes generados por el frontend
     (Orval para la web, openapi-generator para el reloj Wear OS).
@@ -13,6 +14,9 @@ info:
     - Autenticación con `Authorization: Bearer <accessToken>` (JWT de 15 min). El refresh token es
       rotativo: cada uso devuelve uno nuevo e invalida el anterior; reutilizar uno ya usado revoca
       toda la sesión.
+
+    Cada operación lleva `x-phase` (fase en que se implementa). `info.x-closed-phase` es la última
+    fase cerrada: todas sus operaciones deben estar implementadas.
 
     Fases:
     - 0 Fundaciones: salud.
@@ -41,6 +45,7 @@ paths:
     get:
       tags: [health]
       operationId: getHealth
+      x-phase: 0
       summary: Liveness
       description: Indica que el proceso está vivo. No consulta dependencias.
       security: []
@@ -55,6 +60,7 @@ paths:
     get:
       tags: [health]
       operationId: getReadiness
+      x-phase: 0
       summary: Readiness
       description: Comprueba las dependencias (Postgres y Redis).
       security: []
@@ -83,6 +89,7 @@ paths:
     post:
       tags: [auth]
       operationId: register
+      x-phase: 1
       summary: Crear cuenta
       description: |
         Crea un usuario y abre sesión. Si `role` es `patient`, se crea también su perfil de
@@ -111,6 +118,7 @@ paths:
     post:
       tags: [auth]
       operationId: login
+      x-phase: 1
       summary: Iniciar sesión
       description: Límite de peticiones por IP y por correo.
       security: []
@@ -137,6 +145,7 @@ paths:
     post:
       tags: [auth]
       operationId: refreshTokens
+      x-phase: 1
       summary: Rotar tokens
       description: |
         Cambia un refresh token por un par nuevo. Sirve tanto para usuarios como para relojes.
@@ -163,6 +172,7 @@ paths:
     post:
       tags: [auth]
       operationId: logout
+      x-phase: 1
       summary: Cerrar sesión
       description: Revoca el refresh token indicado (y su familia). Idempotente.
       requestBody:
@@ -184,6 +194,7 @@ paths:
     get:
       tags: [users]
       operationId: getMe
+      x-phase: 1
       summary: Usuario autenticado
       responses:
         "200":
@@ -197,6 +208,7 @@ paths:
     patch:
       tags: [users]
       operationId: updateMe
+      x-phase: 1
       summary: Actualizar perfil
       requestBody:
         required: true
@@ -219,6 +231,7 @@ paths:
     get:
       tags: [users]
       operationId: listMyConsents
+      x-phase: 1
       summary: Consentimientos
       description: Devuelve siempre las tres finalidades; las no otorgadas llevan `granted = false`.
       responses:
@@ -234,6 +247,7 @@ paths:
     put:
       tags: [users]
       operationId: setMyConsent
+      x-phase: 1
       summary: Otorgar o retirar un consentimiento
       description: Idempotente. Cada cambio queda registrado con fecha y versión del texto aceptado.
       parameters:
@@ -261,6 +275,7 @@ paths:
     get:
       tags: [patients]
       operationId: listPatients
+      x-phase: 1
       summary: Pacientes accesibles
       description: |
         Un paciente ve solo su propio perfil. Un cuidador ve los pacientes con vínculo activo y
@@ -282,6 +297,7 @@ paths:
     post:
       tags: [patients]
       operationId: createPatient
+      x-phase: 1
       summary: Crear paciente gestionado
       description: |
         Solo cuidadores. Crea un paciente sin cuenta propia (por ejemplo, una persona mayor que solo
@@ -311,6 +327,7 @@ paths:
     get:
       tags: [patients]
       operationId: getPatient
+      x-phase: 1
       summary: Detalle de un paciente
       responses:
         "200":
@@ -326,6 +343,7 @@ paths:
     patch:
       tags: [patients]
       operationId: updatePatient
+      x-phase: 1
       summary: Actualizar un paciente
       requestBody:
         required: true
@@ -352,6 +370,7 @@ paths:
     get:
       tags: [patients]
       operationId: listPatientCaregivers
+      x-phase: 1
       summary: Cuidadores de un paciente
       parameters:
         - $ref: "#/components/parameters/Cursor"
@@ -381,6 +400,7 @@ paths:
     delete:
       tags: [patients]
       operationId: removePatientCaregiver
+      x-phase: 1
       summary: Desvincular un cuidador
       description: |
         Desactiva el vínculo. Lo puede hacer el propio paciente o el cuidador que se retira.
@@ -400,6 +420,7 @@ paths:
     post:
       tags: [patients]
       operationId: createCaregiverInvitation
+      x-phase: 1
       summary: Invitar a un cuidador
       description: |
         Genera un código de un solo uso (válido 72 h) que el paciente comparte con el cuidador.
@@ -421,6 +442,7 @@ paths:
     post:
       tags: [patients]
       operationId: acceptCaregiverInvitation
+      x-phase: 1
       summary: Aceptar una invitación
       description: Solo cuidadores. Crea (o reactiva) el vínculo con el paciente.
       parameters:
@@ -450,6 +472,7 @@ paths:
     post:
       tags: [devices]
       operationId: createPairingCode
+      x-phase: 1
       summary: El reloj pide un código de vinculación
       description: |
         Paso 1 del flujo tipo device code (RFC 8628). El reloj muestra `code` en pantalla y guarda
@@ -477,6 +500,7 @@ paths:
     post:
       tags: [devices]
       operationId: confirmPairingCode
+      x-phase: 1
       summary: Confirmar la vinculación desde la web
       description: |
         Paso 2. El paciente o un cuidador con vínculo activo escribe el código que muestra el reloj
@@ -517,6 +541,7 @@ paths:
     post:
       tags: [devices]
       operationId: exchangeDeviceCode
+      x-phase: 1
       summary: El reloj obtiene sus tokens
       description: |
         Paso 3. Mientras la web no confirme, responde 400 con `code`:
@@ -556,6 +581,7 @@ paths:
     get:
       tags: [devices]
       operationId: getMyDevice
+      x-phase: 1
       summary: El reloj consulta su vinculación
       description: Solo con token de dispositivo.
       responses:
@@ -573,6 +599,7 @@ paths:
     put:
       tags: [devices]
       operationId: setMyPushToken
+      x-phase: 1
       summary: Registrar el token FCM del reloj
       description: Solo con token de dispositivo. Idempotente; reemplaza el anterior.
       requestBody:
@@ -596,6 +623,7 @@ paths:
     get:
       tags: [devices]
       operationId: listPatientDevices
+      x-phase: 1
       summary: Relojes de un paciente
       parameters:
         - $ref: "#/components/parameters/Cursor"
@@ -617,6 +645,7 @@ paths:
     delete:
       tags: [devices]
       operationId: unpairDevice
+      x-phase: 1
       summary: Desvincular un reloj
       description: Revoca los tokens del reloj. Idempotente.
       parameters:

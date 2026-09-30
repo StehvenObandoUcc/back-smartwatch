@@ -34,8 +34,23 @@ def _operations(spec: dict[str, Any]) -> set[Operation]:
     }
 
 
+def load_contract() -> dict[str, Any]:
+    contract: dict[str, Any] = yaml.safe_load(CONTRACT_PATH.read_text(encoding="utf-8"))
+    return contract
+
+
 def contract_operations() -> set[Operation]:
-    return _operations(yaml.safe_load(CONTRACT_PATH.read_text(encoding="utf-8")))
+    return set(contract_phases())
+
+
+def contract_phases() -> dict[Operation, int | None]:
+    """Fase (`x-phase`) de cada operación del contrato; None si no la declara."""
+    return {
+        (method, path, op["operationId"]): op.get("x-phase")
+        for path, item in load_contract()["paths"].items()
+        for method, op in item.items()
+        if method in _HTTP_METHODS
+    }
 
 
 def app_operations(app: FastAPI) -> set[Operation]:
