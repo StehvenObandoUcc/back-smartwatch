@@ -1,7 +1,10 @@
-from sqlalchemy import MetaData
+import uuid
+from datetime import datetime
+
+from sqlalchemy import DateTime, MetaData, func
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
 from sqlalchemy.ext.asyncio import AsyncSession as AsyncSession
-from sqlalchemy.orm import DeclarativeBase
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 from app.core.config import Settings
 
@@ -17,6 +20,15 @@ NAMING_CONVENTION = {
 
 class Base(DeclarativeBase):
     metadata = MetaData(naming_convention=NAMING_CONVENTION)
+    type_annotation_map = {datetime: DateTime(timezone=True)}  # noqa: RUF012
+
+
+class UuidPk:
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+
+
+class CreatedAt:
+    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
 
 
 def create_engine(settings: Settings) -> AsyncEngine:

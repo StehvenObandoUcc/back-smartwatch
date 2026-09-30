@@ -13,6 +13,11 @@ os.environ.setdefault("APP_ENV", "test")
 os.environ.setdefault("LOG_JSON", "false")
 os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost:1/test")
 os.environ.setdefault("REDIS_URL", "redis://localhost:1/0")
+os.environ.setdefault("JWT_SECRET", "secreto-de-pruebas-0123456789abcdef0123456789")
+# Argon2 barato en pruebas: el coste real no aporta nada aquí y ralentiza cada registro.
+os.environ.setdefault("ARGON2_TIME_COST", "1")
+os.environ.setdefault("ARGON2_MEMORY_COST_KIB", "1024")
+os.environ.setdefault("ARGON2_PARALLELISM", "1")
 
 from app.core.config import get_settings
 
@@ -70,7 +75,8 @@ async def make_client(app: FastAPI) -> AsyncIterator[AsyncClient]:
         app.router.lifespan_context(app),
         AsyncClient(
             transport=ASGITransport(app=app, raise_app_exceptions=False),
-            base_url="http://test",
+            # https: las cookies Secure solo viajan por conexiones seguras.
+            base_url="https://test",
         ) as client,
     ):
         yield client
