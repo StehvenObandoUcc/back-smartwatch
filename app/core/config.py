@@ -51,6 +51,9 @@ class Settings(BaseSettings):
     rate_register_ip: RateLimit = RateLimit(limit=5, window_seconds=3600)
     rate_login_ip: RateLimit = RateLimit(limit=20, window_seconds=900)
     rate_login_email: RateLimit = RateLimit(limit=5, window_seconds=900)
+    rate_invitation_patient: RateLimit = RateLimit(limit=10, window_seconds=86400)
+    rate_invitation_accept_user: RateLimit = RateLimit(limit=10, window_seconds=900)
+    rate_invitation_accept_ip: RateLimit = RateLimit(limit=30, window_seconds=900)
 
 
 @lru_cache
