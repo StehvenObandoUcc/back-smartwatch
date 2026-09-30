@@ -1,0 +1,107 @@
+openapi: 3.1.0
+info:
+  title: API de recordatorios de medicamentos
+  version: 0.1.0
+  description: |
+    Contrato de la API. Fuente de verdad del backend y del cliente generado por el frontend (Orval).
+
+    Convenciones:
+    - Rutas en kebab-case y plural; campos JSON en camelCase; fechas ISO 8601 con zona; IDs UUID.
+    - Errores en RFC 9457 (`application/problem+json`).
+    - Paginación por cursor (`?cursor=&limit=`) con respuesta `{ items, nextCursor }`.
+
+    Fase 0 (Fundaciones): solo endpoints de salud.
+servers:
+  - url: http://localhost:8000
+    description: Desarrollo local (docker compose)
+tags:
+  - name: health
+    description: Sondas de vida y disponibilidad
+paths:
+  /health:
+    get:
+      tags: [health]
+      operationId: getHealth
+      summary: Liveness
+      description: Indica que el proceso está vivo. No consulta dependencias.
+      responses:
+        "200":
+          description: El servicio está vivo.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Health"
+  /health/ready:
+    get:
+      tags: [health]
+      operationId: getReadiness
+      summary: Readiness
+      description: Comprueba las dependencias (Postgres y Redis).
+      responses:
+        "200":
+          description: Todas las dependencias responden.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Readiness"
+        "503":
+          description: Alguna dependencia no responde.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+              example:
+                type: https://api.example.com/problems/dependency-unavailable
+                title: Dependencia no disponible
+                status: 503
+                detail: Postgres no responde.
+                code: dependency_unavailable
+components:
+  schemas:
+    Health:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [ok]
+    Readiness:
+      type: object
+      required: [status, checks]
+      properties:
+        status:
+          type: string
+          enum: [ok]
+        checks:
+          type: object
+          required: [database, redis]
+          properties:
+            database:
+              type: string
+              enum: [ok]
+            redis:
+              type: string
+              enum: [ok]
+    Problem:
+      type: object
+      description: Error según RFC 9457.
+      required: [type, title, status, detail, code]
+      properties:
+        type:
+          type: string
+          format: uri-reference
+        title:
+          type: string
+        status:
+          type: integer
+          minimum: 400
+          maximum: 599
+        detail:
+          type: string
+        code:
+          type: string
+          description: Código estable legible por máquina (snake_case).
+        instance:
+          type: string
+          format: uri-reference
+      additionalProperties: true
