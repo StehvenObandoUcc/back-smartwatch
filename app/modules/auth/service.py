@@ -15,6 +15,8 @@ from app.core.security import (
 )
 from app.modules.auth.schemas import AccessTokenOut, AuthSessionOut, LoginRequest, RegisterRequest
 from app.modules.auth.tokens import RefreshTokens, invalid_refresh
+from app.modules.patients.models import Patient
+from app.modules.patients.repository import PatientRepository
 from app.modules.users.models import User
 from app.modules.users.repository import UserRepository
 from app.modules.users.service import to_user_out
@@ -48,6 +50,7 @@ class AuthService:
         self._passwords = passwords
         self._access = access_tokens
         self._users = UserRepository(session)
+        self._patients = PatientRepository(session)
         self._refresh = RefreshTokens(session)
         self._refresh_lifetime = timedelta(days=settings.user_refresh_ttl_days)
 
@@ -66,6 +69,17 @@ class AuthService:
         self._users.add(user)
         try:
             await self._session.flush()
+            if user.role == "patient":
+                # Mismo commit que el usuario: nunca queda un paciente con cuenta sin su registro.
+                self._patients.add(
+                    Patient(
+                        display_name=user.display_name,
+                        timezone=user.timezone,
+                        owner_user_id=user.id,
+                        created_by_user_id=user.id,
+                    )
+                )
+                await self._session.flush()
         except IntegrityError:
             # Carrera: otro registro con el mismo correo entre la comprobación y el insert.
             await self._session.rollback()
@@ -111,7 +125,8 @@ class AuthService:
         await self._session.refresh(user)
         return WebSession(
             body=AuthSessionOut(
-                user=to_user_out(user, patient_id=None), tokens=self._access_token(user)
+                user=to_user_out(user, patient_id=await self._patients.get_owned_id(user.id)),
+                tokens=self._access_token(user),
             ),
             refresh_token=raw,
         )
