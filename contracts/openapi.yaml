@@ -11,9 +11,31 @@ info:
     - Rutas en kebab-case y plural; campos JSON en camelCase; fechas ISO 8601 con zona; IDs UUID.
     - Errores en RFC 9457 (`application/problem+json`) con `type`, `title`, `status`, `detail`, `code`.
     - Paginación por cursor (`?cursor=&limit=`) con respuesta `{ items, nextCursor }`.
-    - Autenticación con `Authorization: Bearer <accessToken>` (JWT de 15 min). El refresh token es
-      rotativo: cada uso devuelve uno nuevo e invalida el anterior; reutilizar uno ya usado revoca
-      toda la sesión.
+
+    Autenticación (`Authorization: Bearer <accessToken>`, JWT de 15 min). Hay dos tipos de sesión:
+    - **Usuario (web)**: se abre con `POST /auth/register` o `POST /auth/login` y se renueva con
+      `POST /auth/refresh`. Su token no sirve en `/devices/me/*` (403).
+    - **Reloj**: se abre con `POST /devices/token` (`grantType: device_code`) y se renueva con el
+      mismo endpoint (`grantType: refresh_token`). Su token **solo** sirve en `/devices/me/*`; en
+      cualquier otra ruta responde 403. `POST /auth/refresh` rechaza refresh tokens de reloj (401).
+    En ambos casos el refresh token es rotativo: cada uso devuelve uno nuevo e invalida el anterior;
+    reutilizar uno ya rotado revoca toda la familia (`code: refresh_token_reused`). El refresh token
+    de usuario caduca a los 30 días; el del reloj, tras 90 días sin uso. Desvincular un reloj
+    revoca sus tokens.
+
+    Pacientes y cuidadores:
+    - Al registrarse con `role: patient` se crea automáticamente su registro en `/patients`
+      (`managed: false`, mismo `displayName` y `timezone`) y `user.patientId` apunta a él. Ese
+      paciente puede invitar cuidadores y gestiona sus propios consentimientos.
+    - Un cuidador puede crear pacientes gestionados (`managed: true`, sin cuenta propia) con
+      `POST /patients`; otorga sus consentimientos en su nombre y queda registrado en `grantedBy`.
+    - Cualquier ruta `/patients/{patientId}/...` sobre un paciente con el que el usuario no tiene
+      un vínculo activo responde **404** (no 403), para no revelar que existe. 403 se reserva a
+      acciones sobre un paciente accesible que el rol no permite.
+
+    Códigos de un solo uso (invitación de cuidador y vinculación del reloj): caducan, se consumen
+    al usarse y tienen límite de intentos por usuario/IP; al superarlo responden 429 con
+    `Retry-After`.
 
     Cada operación lleva `x-phase` (fase en que se implementa). `info.x-closed-phase` es la última
     fase cerrada: todas sus operaciones deben estar implementadas.
@@ -92,8 +114,10 @@ paths:
       x-phase: 1
       summary: Crear cuenta
       description: |
-        Crea un usuario y abre sesión. Si `role` es `patient`, se crea también su perfil de
-        paciente (`user.patientId`). Límite de peticiones por IP.
+        Crea un usuario y abre sesión. Si `role` es `patient`, en la misma transacción se crea su
+        registro en `/patients` (`managed: false`, con el `displayName` y `timezone` del
+        registro) y `user.patientId` apunta a él. Si `role` es `caregiver`, `user.patientId` es
+        null. Límite de peticiones por IP (429). Sin verificación de correo hasta la fase 4.
       security: []
       requestBody:
         required: true
@@ -146,10 +170,11 @@ paths:
       tags: [auth]
       operationId: refreshTokens
       x-phase: 1
-      summary: Rotar tokens
+      summary: Rotar tokens de usuario
       description: |
-        Cambia un refresh token por un par nuevo. Sirve tanto para usuarios como para relojes.
-        Reutilizar un refresh token ya rotado revoca toda la familia de tokens (`code: refresh_token_reused`).
+        Cambia un refresh token de usuario por un par nuevo. Los relojes renuevan con
+        `POST /devices/token` (`grantType: refresh_token`); un refresh token de reloj aquí da 401.
+        Reutilizar un refresh token ya rotado revoca toda la familia (`code: refresh_token_reused`).
       security: []
       requestBody:
         required: true
@@ -232,8 +257,11 @@ paths:
       tags: [users]
       operationId: listMyConsents
       x-phase: 1
-      summary: Consentimientos
-      description: Devuelve siempre las tres finalidades; las no otorgadas llevan `granted = false`.
+      summary: Consentimientos del usuario
+      description: |
+        Consentimientos del usuario autenticado sobre sus propios datos. Para un usuario con rol
+        `patient` son los mismos registros que `GET /patients/{patientId}/consents` de su perfil.
+        Devuelve siempre las tres finalidades; las no respondidas llevan `granted = false`.
       responses:
         "200":
           description: Estado de cada finalidad.
@@ -248,8 +276,10 @@ paths:
       tags: [users]
       operationId: setMyConsent
       x-phase: 1
-      summary: Otorgar o retirar un consentimiento
-      description: Idempotente. Cada cambio queda registrado con fecha y versión del texto aceptado.
+      summary: Otorgar o retirar un consentimiento propio
+      description: |
+        Idempotente. Cada cambio queda registrado (historial) con fecha, versión del texto aceptado
+        y `grantedBy` = el propio usuario.
       parameters:
         - $ref: "#/components/parameters/ConsentPurposePath"
       requestBody:
@@ -345,6 +375,9 @@ paths:
       operationId: updatePatient
       x-phase: 1
       summary: Actualizar un paciente
+      description: |
+        Un paciente con cuenta edita su propio perfil. Un paciente gestionado lo editan sus
+        cuidadores con vínculo activo. Un cuidador sobre un paciente con cuenta recibe 403.
       requestBody:
         required: true
         content:
@@ -360,6 +393,66 @@ paths:
                 $ref: "#/components/schemas/Patient"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+  /patients/{patientId}/consents:
+    parameters:
+      - $ref: "#/components/parameters/PatientIdPath"
+    get:
+      tags: [patients]
+      operationId: listPatientConsents
+      x-phase: 1
+      summary: Consentimientos de un paciente
+      description: |
+        Lo pueden leer el propio paciente y sus cuidadores con vínculo activo. Devuelve siempre las
+        tres finalidades; las no respondidas llevan `granted = false`.
+      responses:
+        "200":
+          description: Estado de cada finalidad.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConsentList"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /patients/{patientId}/consents/{purpose}:
+    parameters:
+      - $ref: "#/components/parameters/PatientIdPath"
+      - $ref: "#/components/parameters/ConsentPurposePath"
+    put:
+      tags: [patients]
+      operationId: setPatientConsent
+      x-phase: 1
+      summary: Otorgar o retirar un consentimiento del paciente
+      description: |
+        - Paciente con cuenta: solo él (equivale a `PUT /users/me/consents/{purpose}`); un
+          cuidador recibe 403.
+        - Paciente gestionado: cualquier cuidador con vínculo activo, en nombre del paciente.
+        Idempotente. Cada cambio queda en el historial con fecha, versión del texto y `grantedBy`
+        (usuario que decidió).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ConsentUpdate"
+      responses:
+        "200":
+          description: Consentimiento actualizado.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Consent"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
         "422":
@@ -388,32 +481,40 @@ paths:
           $ref: "#/components/responses/NotFound"
         "422":
           $ref: "#/components/responses/ValidationError"
-  /patients/{patientId}/caregivers/{caregiverId}:
+  /patients/{patientId}/caregivers/{userId}:
     parameters:
       - $ref: "#/components/parameters/PatientIdPath"
-      - name: caregiverId
+      - name: userId
         in: path
         required: true
+        description: Id de usuario del cuidador.
         schema:
           type: string
           format: uuid
     delete:
       tags: [patients]
-      operationId: removePatientCaregiver
+      operationId: revokePatientCaregiver
       x-phase: 1
-      summary: Desvincular un cuidador
+      summary: Revocar el vínculo de un cuidador
       description: |
-        Desactiva el vínculo. Lo puede hacer el propio paciente o el cuidador que se retira.
-        Idempotente.
+        Desactiva el vínculo (no se borra: queda para auditoría) y el cuidador deja de ver al
+        paciente de inmediato. Pueden hacerlo:
+        - el paciente con cuenta, sobre cualquiera de sus cuidadores;
+        - el propio cuidador, sobre su vínculo;
+        - en un paciente gestionado, cualquier cuidador con vínculo activo sobre otro, salvo el
+          último (409 `code: last_caregiver`, el paciente quedaría sin nadie que lo gestione).
+        Idempotente: revocar un vínculo ya inactivo devuelve 204.
       responses:
         "204":
-          description: Vínculo desactivado.
+          description: Vínculo inactivo.
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
   /patients/{patientId}/caregiver-invitations:
     parameters:
       - $ref: "#/components/parameters/PatientIdPath"
@@ -423,8 +524,9 @@ paths:
       x-phase: 1
       summary: Invitar a un cuidador
       description: |
-        Genera un código de un solo uso (válido 72 h) que el paciente comparte con el cuidador.
-        El envío por correo llegará en la fase 4; en esta fase el código se comparte a mano.
+        Genera un código de un solo uso, válido 72 h, que se comparte a mano con el cuidador (el
+        envío por correo llega en la fase 4). Lo crea el paciente con cuenta o, en un paciente
+        gestionado, un cuidador con vínculo activo. Límite de invitaciones por paciente y día (429).
       responses:
         "201":
           description: Invitación creada.
@@ -438,13 +540,19 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /caregiver-invitations/{code}/accept:
     post:
       tags: [patients]
       operationId: acceptCaregiverInvitation
       x-phase: 1
       summary: Aceptar una invitación
-      description: Solo cuidadores. Crea (o reactiva) el vínculo con el paciente.
+      description: |
+        Solo cuidadores (un paciente recibe 403). Crea o reactiva el vínculo y consume el código.
+        Un código inexistente, caducado o ya usado responde 404 (`code: invitation_not_found`).
+        Límite de intentos por usuario e IP (429) para impedir adivinar códigos. Si el cuidador ya
+        tiene un vínculo activo con ese paciente: 409 (`code: already_linked`).
       parameters:
         - name: code
           in: path
@@ -466,6 +574,8 @@ paths:
           $ref: "#/components/responses/NotFound"
         "409":
           $ref: "#/components/responses/Conflict"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
 
   # ─── Fase 1: reloj ───────────────────────────────────────────────────────────
   /devices/pairing-codes:
@@ -477,7 +587,8 @@ paths:
       description: |
         Paso 1 del flujo tipo device code (RFC 8628). El reloj muestra `code` en pantalla y guarda
         `deviceCode` en secreto para consultar `POST /devices/token` cada `interval` segundos.
-        Límite de peticiones por IP.
+        Ambos son de un solo uso y caducan a los `expiresIn` segundos (10 min). Límite de
+        peticiones por IP (429).
       security: []
       requestBody:
         required: true
@@ -503,9 +614,14 @@ paths:
       x-phase: 1
       summary: Confirmar la vinculación desde la web
       description: |
-        Paso 2. El paciente o un cuidador con vínculo activo escribe el código que muestra el reloj
-        y elige el paciente. Un paciente solo puede tener un reloj activo: si ya había otro, se
-        desvincula y se revocan sus tokens.
+        Paso 2. Desde la web, el usuario escribe el código que muestra el reloj y envía en el
+        cuerpo el `patientId` al que se vinculará. Puede hacerlo el paciente con cuenta (sobre sí
+        mismo) o un cuidador con vínculo activo.
+        - Código inexistente, caducado o ya confirmado: 404 (`code: pairing_code_not_found`).
+        - `patientId` sin vínculo activo con el usuario: 404 (`code: patient_not_found`).
+        - Límite de intentos por usuario e IP (429) para impedir adivinar códigos.
+        Un paciente solo tiene un reloj activo: si ya había otro, se desvincula y se revocan sus
+        tokens.
       parameters:
         - name: code
           in: path
@@ -531,8 +647,6 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
-        "409":
-          $ref: "#/components/responses/Conflict"
         "422":
           $ref: "#/components/responses/ValidationError"
         "429":
@@ -540,15 +654,26 @@ paths:
   /devices/token:
     post:
       tags: [devices]
-      operationId: exchangeDeviceCode
+      operationId: requestDeviceToken
       x-phase: 1
-      summary: El reloj obtiene sus tokens
+      summary: El reloj obtiene o renueva sus tokens
       description: |
-        Paso 3. Mientras la web no confirme, responde 400 con `code`:
+        Único endpoint de tokens del reloj, según `grantType`:
+
+        **`device_code`** (paso 3 de la vinculación). Mientras la web no confirme responde 400 con
+        `code`:
         - `authorization_pending`: sigue esperando.
         - `slow_down`: consulta demasiado rápido; suma 5 s a `interval`.
-        - `expired_token`: el código caducó; hay que pedir otro.
-        Tras la confirmación devuelve los tokens una sola vez; el `deviceCode` queda consumido.
+        - `expired_token`: el código caducó o ya se usó; hay que pedir otro.
+        Tras la confirmación devuelve los tokens una sola vez y el `deviceCode` queda consumido.
+
+        **`refresh_token`** (renovación). El reloj renueva su token de acceso antes de que caduque
+        o al recibir 401. El refresh token rota en cada uso; reutilizar uno ya rotado revoca los
+        tokens del reloj (`code: refresh_token_reused`) y hay que volver a vincularlo. Un refresh
+        token inválido, caducado (90 días sin uso) o de un reloj desvinculado responde 401. Un
+        refresh token de usuario aquí también responde 401.
+
+        Límite de peticiones por IP y por `deviceCode` (429).
       security: []
       requestBody:
         required: true
@@ -575,15 +700,19 @@ paths:
                 status: 400
                 detail: El código aún no se ha confirmado desde la web.
                 code: authorization_pending
+        "401":
+          $ref: "#/components/responses/Unauthorized"
         "422":
           $ref: "#/components/responses/ValidationError"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /devices/me:
     get:
       tags: [devices]
       operationId: getMyDevice
       x-phase: 1
       summary: El reloj consulta su vinculación
-      description: Solo con token de dispositivo.
+      description: Solo con token de reloj; un token de usuario recibe 403.
       responses:
         "200":
           description: Reloj y paciente vinculado.
@@ -601,7 +730,7 @@ paths:
       operationId: setMyPushToken
       x-phase: 1
       summary: Registrar el token FCM del reloj
-      description: Solo con token de dispositivo. Idempotente; reemplaza el anterior.
+      description: Solo con token de reloj; un token de usuario recibe 403. Idempotente; reemplaza el anterior.
       requestBody:
         required: true
         content:
@@ -647,7 +776,10 @@ paths:
       operationId: unpairDevice
       x-phase: 1
       summary: Desvincular un reloj
-      description: Revoca los tokens del reloj. Idempotente.
+      description: |
+        Lo hacen el paciente con cuenta o un cuidador con vínculo activo. Revoca los tokens del
+        reloj de inmediato. Un reloj de un paciente sin vínculo con el usuario responde 404.
+        Idempotente: desvincular un reloj ya desvinculado devuelve 204.
       parameters:
         - name: deviceId
           in: path
@@ -670,8 +802,9 @@ components:
       scheme: bearer
       bearerFormat: JWT
       description: |
-        Token de acceso de 15 min. Dos tipos: de usuario (web) y de dispositivo (reloj). Los
-        endpoints `/devices/me*` solo aceptan tokens de dispositivo; el resto, tokens de usuario.
+        Token de acceso de 15 min. Dos tipos: de usuario (web) y de reloj. `/devices/me` y
+        `/devices/me/*` solo aceptan tokens de reloj; todas las demás rutas protegidas, solo
+        tokens de usuario. El tipo equivocado responde 403 (`code: wrong_token_type`).
 
   parameters:
     Cursor:
@@ -713,14 +846,19 @@ components:
           schema:
             $ref: "#/components/schemas/Problem"
     Forbidden:
-      description: Autenticado pero sin permiso (rol, tipo de token o vínculo inactivo).
+      description: |
+        Autenticado pero sin permiso: rol que no permite la acción sobre un recurso accesible, o
+        tipo de token equivocado (`wrong_token_type`). Nunca se usa para pacientes sin vínculo
+        (eso es 404).
       content:
         application/problem+json:
           schema:
             $ref: "#/components/schemas/Problem"
     NotFound:
       description: |
-        No existe o el usuario no tiene acceso (no se distingue para no revelar recursos ajenos).
+        No existe o el usuario no tiene acceso: un cuidador que pide un paciente sin vínculo
+        activo (o sus recursos) recibe 404, igual que si no existiera, para no revelar datos
+        ajenos.
       content:
         application/problem+json:
           schema:
@@ -950,7 +1088,7 @@ components:
       enum: [health_data, ai_chat, notifications]
     Consent:
       type: object
-      required: [purpose, granted, version, updatedAt]
+      required: [purpose, granted, version, updatedAt, grantedBy]
       properties:
         purpose:
           $ref: "#/components/schemas/ConsentPurpose"
@@ -966,6 +1104,25 @@ components:
             - type: string
               format: date-time
             - type: "null"
+        grantedBy:
+          description: |
+            Quién tomó la última decisión: el propio titular o, en un paciente gestionado, el
+            cuidador que decidió en su nombre. Null si nunca se ha respondido.
+          oneOf:
+            - $ref: "#/components/schemas/ConsentActor"
+            - type: "null"
+    ConsentActor:
+      type: object
+      required: [userId, displayName, onBehalf]
+      properties:
+        userId:
+          type: string
+          format: uuid
+        displayName:
+          $ref: "#/components/schemas/DisplayName"
+        onBehalf:
+          type: boolean
+          description: true si decidió un cuidador en nombre del paciente.
     ConsentList:
       type: object
       required: [items]
@@ -1121,13 +1278,36 @@ components:
           type: string
           format: uuid
     DeviceTokenRequest:
+      oneOf:
+        - $ref: "#/components/schemas/DeviceCodeGrant"
+        - $ref: "#/components/schemas/DeviceRefreshGrant"
+      discriminator:
+        propertyName: grantType
+        mapping:
+          device_code: "#/components/schemas/DeviceCodeGrant"
+          refresh_token: "#/components/schemas/DeviceRefreshGrant"
+    DeviceCodeGrant:
       type: object
-      required: [deviceCode]
+      required: [grantType, deviceCode]
       properties:
+        grantType:
+          type: string
+          const: device_code
         deviceCode:
           type: string
           minLength: 1
           maxLength: 256
+    DeviceRefreshGrant:
+      type: object
+      required: [grantType, refreshToken]
+      properties:
+        grantType:
+          type: string
+          const: refresh_token
+        refreshToken:
+          type: string
+          minLength: 1
+          maxLength: 512
     Device:
       type: object
       required: [id, patientId, model, pairedAt, lastSeenAt, hasPushToken]
