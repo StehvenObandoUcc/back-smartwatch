@@ -13,6 +13,7 @@ from app.core.middleware import RequestContextMiddleware
 from app.core.security import AccessTokenService, PasswordService
 from app.modules.auth.router import router as auth_router
 from app.modules.health.router import router as health_router
+from app.modules.patients.router import router as patients_router
 from app.modules.users.router import router as users_router
 
 
@@ -61,4 +62,5 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(health_router)
     app.include_router(auth_router)
     app.include_router(users_router)
+    app.include_router(patients_router)
     return app
