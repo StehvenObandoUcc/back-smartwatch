@@ -1,8 +1,10 @@
 import os
 from collections.abc import AsyncIterator, Iterator
 from pathlib import Path
+from typing import Any
 
 import pytest
+import yaml
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
@@ -16,6 +18,28 @@ from app.core.config import get_settings
 
 ROOT = Path(__file__).resolve().parents[1]
 CONTRACT_PATH = ROOT / "contracts" / "openapi.yaml"
+
+_HTTP_METHODS = {"get", "post", "put", "patch", "delete"}
+
+Operation = tuple[str, str, str]
+
+
+def _operations(spec: dict[str, Any]) -> set[Operation]:
+    """(método, ruta, operationId) de cada operación de un documento OpenAPI."""
+    return {
+        (method, path, op["operationId"])
+        for path, item in spec["paths"].items()
+        for method, op in item.items()
+        if method in _HTTP_METHODS
+    }
+
+
+def contract_operations() -> set[Operation]:
+    return _operations(yaml.safe_load(CONTRACT_PATH.read_text(encoding="utf-8")))
+
+
+def app_operations(app: FastAPI) -> set[Operation]:
+    return _operations(app.openapi())
 
 
 @pytest.fixture(autouse=True)
