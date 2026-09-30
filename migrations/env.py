@@ -4,10 +4,12 @@ from alembic import context
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import create_async_engine
 
+# Cada módulo registra aquí sus modelos para que autogenerate los vea.
+import app.modules.auth.models
+import app.modules.consents.models
+import app.modules.users.models  # noqa: F401
 from app.core.config import get_settings
 from app.core.db import Base
-
-# Cada módulo importará aquí sus modelos para que autogenerate los vea.
 
 target_metadata = Base.metadata
 
