@@ -1,29 +1,49 @@
 openapi: 3.1.0
 info:
   title: API de recordatorios de medicamentos
-  version: 0.1.0
+  version: 0.2.0
   description: |
-    Contrato de la API. Fuente de verdad del backend y del cliente generado por el frontend (Orval).
+    Contrato de la API. Fuente de verdad del backend y de los clientes generados por el frontend
+    (Orval para la web, openapi-generator para el reloj Wear OS).
 
     Convenciones:
     - Rutas en kebab-case y plural; campos JSON en camelCase; fechas ISO 8601 con zona; IDs UUID.
-    - Errores en RFC 9457 (`application/problem+json`).
+    - Errores en RFC 9457 (`application/problem+json`) con `type`, `title`, `status`, `detail`, `code`.
     - Paginación por cursor (`?cursor=&limit=`) con respuesta `{ items, nextCursor }`.
+    - Autenticación con `Authorization: Bearer <accessToken>` (JWT de 15 min). El refresh token es
+      rotativo: cada uso devuelve uno nuevo e invalida el anterior; reutilizar uno ya usado revoca
+      toda la sesión.
 
-    Fase 0 (Fundaciones): solo endpoints de salud.
+    Fases:
+    - 0 Fundaciones: salud.
+    - 1 Cuentas y vinculación: registro, sesión, perfil, consentimientos, pacientes, cuidadores
+      y vinculación del reloj por código (flujo tipo device code, RFC 8628).
 servers:
   - url: http://localhost:8000
-    description: Desarrollo local (docker compose)
+    description: Desarrollo local
+security:
+  - bearerAuth: []
 tags:
   - name: health
     description: Sondas de vida y disponibilidad
+  - name: auth
+    description: Registro y sesión
+  - name: users
+    description: Perfil y consentimientos del usuario autenticado
+  - name: patients
+    description: Pacientes y sus cuidadores
+  - name: devices
+    description: Vinculación y gestión del reloj
+
 paths:
+  # ─── Fase 0 ──────────────────────────────────────────────────────────────────
   /health:
     get:
       tags: [health]
       operationId: getHealth
       summary: Liveness
       description: Indica que el proceso está vivo. No consulta dependencias.
+      security: []
       responses:
         "200":
           description: El servicio está vivo.
@@ -37,6 +57,7 @@ paths:
       operationId: getReadiness
       summary: Readiness
       description: Comprueba las dependencias (Postgres y Redis).
+      security: []
       responses:
         "200":
           description: Todas las dependencias responden.
@@ -56,8 +77,712 @@ paths:
                 status: 503
                 detail: Postgres no responde.
                 code: dependency_unavailable
+
+  # ─── Fase 1: auth ────────────────────────────────────────────────────────────
+  /auth/register:
+    post:
+      tags: [auth]
+      operationId: register
+      summary: Crear cuenta
+      description: |
+        Crea un usuario y abre sesión. Si `role` es `patient`, se crea también su perfil de
+        paciente (`user.patientId`). Límite de peticiones por IP.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RegisterRequest"
+      responses:
+        "201":
+          description: Cuenta creada y sesión abierta.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthSession"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+  /auth/login:
+    post:
+      tags: [auth]
+      operationId: login
+      summary: Iniciar sesión
+      description: Límite de peticiones por IP y por correo.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginRequest"
+      responses:
+        "200":
+          description: Sesión abierta.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthSession"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+  /auth/refresh:
+    post:
+      tags: [auth]
+      operationId: refreshTokens
+      summary: Rotar tokens
+      description: |
+        Cambia un refresh token por un par nuevo. Sirve tanto para usuarios como para relojes.
+        Reutilizar un refresh token ya rotado revoca toda la familia de tokens (`code: refresh_token_reused`).
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RefreshRequest"
+      responses:
+        "200":
+          description: Tokens nuevos.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TokenPair"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+  /auth/logout:
+    post:
+      tags: [auth]
+      operationId: logout
+      summary: Cerrar sesión
+      description: Revoca el refresh token indicado (y su familia). Idempotente.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RefreshRequest"
+      responses:
+        "204":
+          description: Sesión cerrada.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
+  # ─── Fase 1: usuario ─────────────────────────────────────────────────────────
+  /users/me:
+    get:
+      tags: [users]
+      operationId: getMe
+      summary: Usuario autenticado
+      responses:
+        "200":
+          description: Perfil.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    patch:
+      tags: [users]
+      operationId: updateMe
+      summary: Actualizar perfil
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UserUpdate"
+      responses:
+        "200":
+          description: Perfil actualizado.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+  /users/me/consents:
+    get:
+      tags: [users]
+      operationId: listMyConsents
+      summary: Consentimientos
+      description: Devuelve siempre las tres finalidades; las no otorgadas llevan `granted = false`.
+      responses:
+        "200":
+          description: Estado de cada finalidad.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConsentList"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /users/me/consents/{purpose}:
+    put:
+      tags: [users]
+      operationId: setMyConsent
+      summary: Otorgar o retirar un consentimiento
+      description: Idempotente. Cada cambio queda registrado con fecha y versión del texto aceptado.
+      parameters:
+        - $ref: "#/components/parameters/ConsentPurposePath"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ConsentUpdate"
+      responses:
+        "200":
+          description: Consentimiento actualizado.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Consent"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
+  # ─── Fase 1: pacientes y cuidadores ──────────────────────────────────────────
+  /patients:
+    get:
+      tags: [patients]
+      operationId: listPatients
+      summary: Pacientes accesibles
+      description: |
+        Un paciente ve solo su propio perfil. Un cuidador ve los pacientes con vínculo activo y
+        los que él mismo gestiona.
+      parameters:
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: Página de pacientes.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PatientPage"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+    post:
+      tags: [patients]
+      operationId: createPatient
+      summary: Crear paciente gestionado
+      description: |
+        Solo cuidadores. Crea un paciente sin cuenta propia (por ejemplo, una persona mayor que solo
+        usará el reloj) y un vínculo activo con el cuidador que lo crea.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PatientCreate"
+      responses:
+        "201":
+          description: Paciente creado.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Patient"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+  /patients/{patientId}:
+    parameters:
+      - $ref: "#/components/parameters/PatientIdPath"
+    get:
+      tags: [patients]
+      operationId: getPatient
+      summary: Detalle de un paciente
+      responses:
+        "200":
+          description: Paciente.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Patient"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    patch:
+      tags: [patients]
+      operationId: updatePatient
+      summary: Actualizar un paciente
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PatientUpdate"
+      responses:
+        "200":
+          description: Paciente actualizado.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Patient"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+  /patients/{patientId}/caregivers:
+    parameters:
+      - $ref: "#/components/parameters/PatientIdPath"
+    get:
+      tags: [patients]
+      operationId: listPatientCaregivers
+      summary: Cuidadores de un paciente
+      parameters:
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: Página de vínculos activos.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CareLinkPage"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+  /patients/{patientId}/caregivers/{caregiverId}:
+    parameters:
+      - $ref: "#/components/parameters/PatientIdPath"
+      - name: caregiverId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    delete:
+      tags: [patients]
+      operationId: removePatientCaregiver
+      summary: Desvincular un cuidador
+      description: |
+        Desactiva el vínculo. Lo puede hacer el propio paciente o el cuidador que se retira.
+        Idempotente.
+      responses:
+        "204":
+          description: Vínculo desactivado.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /patients/{patientId}/caregiver-invitations:
+    parameters:
+      - $ref: "#/components/parameters/PatientIdPath"
+    post:
+      tags: [patients]
+      operationId: createCaregiverInvitation
+      summary: Invitar a un cuidador
+      description: |
+        Genera un código de un solo uso (válido 72 h) que el paciente comparte con el cuidador.
+        El envío por correo llegará en la fase 4; en esta fase el código se comparte a mano.
+      responses:
+        "201":
+          description: Invitación creada.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CaregiverInvitation"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /caregiver-invitations/{code}/accept:
+    post:
+      tags: [patients]
+      operationId: acceptCaregiverInvitation
+      summary: Aceptar una invitación
+      description: Solo cuidadores. Crea (o reactiva) el vínculo con el paciente.
+      parameters:
+        - name: code
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/InvitationCode"
+      responses:
+        "201":
+          description: Vínculo activo.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CareLink"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  # ─── Fase 1: reloj ───────────────────────────────────────────────────────────
+  /devices/pairing-codes:
+    post:
+      tags: [devices]
+      operationId: createPairingCode
+      summary: El reloj pide un código de vinculación
+      description: |
+        Paso 1 del flujo tipo device code (RFC 8628). El reloj muestra `code` en pantalla y guarda
+        `deviceCode` en secreto para consultar `POST /devices/token` cada `interval` segundos.
+        Límite de peticiones por IP.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PairingCodeRequest"
+      responses:
+        "201":
+          description: Código creado.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PairingCode"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+  /devices/pairing-codes/{code}/confirm:
+    post:
+      tags: [devices]
+      operationId: confirmPairingCode
+      summary: Confirmar la vinculación desde la web
+      description: |
+        Paso 2. El paciente o un cuidador con vínculo activo escribe el código que muestra el reloj
+        y elige el paciente. Un paciente solo puede tener un reloj activo: si ya había otro, se
+        desvincula y se revocan sus tokens.
+      parameters:
+        - name: code
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/UserCode"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PairingConfirm"
+      responses:
+        "200":
+          description: Reloj vinculado.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Device"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+  /devices/token:
+    post:
+      tags: [devices]
+      operationId: exchangeDeviceCode
+      summary: El reloj obtiene sus tokens
+      description: |
+        Paso 3. Mientras la web no confirme, responde 400 con `code`:
+        - `authorization_pending`: sigue esperando.
+        - `slow_down`: consulta demasiado rápido; suma 5 s a `interval`.
+        - `expired_token`: el código caducó; hay que pedir otro.
+        Tras la confirmación devuelve los tokens una sola vez; el `deviceCode` queda consumido.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DeviceTokenRequest"
+      responses:
+        "200":
+          description: Reloj vinculado; tokens del dispositivo.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TokenPair"
+        "400":
+          description: Vinculación aún no completada o código caducado.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+              example:
+                type: https://api.example.com/problems/authorization-pending
+                title: Vinculación pendiente
+                status: 400
+                detail: El código aún no se ha confirmado desde la web.
+                code: authorization_pending
+        "422":
+          $ref: "#/components/responses/ValidationError"
+  /devices/me:
+    get:
+      tags: [devices]
+      operationId: getMyDevice
+      summary: El reloj consulta su vinculación
+      description: Solo con token de dispositivo.
+      responses:
+        "200":
+          description: Reloj y paciente vinculado.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Device"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /devices/me/push-token:
+    put:
+      tags: [devices]
+      operationId: setMyPushToken
+      summary: Registrar el token FCM del reloj
+      description: Solo con token de dispositivo. Idempotente; reemplaza el anterior.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PushTokenUpdate"
+      responses:
+        "204":
+          description: Token guardado.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+  /patients/{patientId}/devices:
+    parameters:
+      - $ref: "#/components/parameters/PatientIdPath"
+    get:
+      tags: [devices]
+      operationId: listPatientDevices
+      summary: Relojes de un paciente
+      parameters:
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: Página de relojes activos.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DevicePage"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+  /devices/{deviceId}:
+    delete:
+      tags: [devices]
+      operationId: unpairDevice
+      summary: Desvincular un reloj
+      description: Revoca los tokens del reloj. Idempotente.
+      parameters:
+        - name: deviceId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "204":
+          description: Reloj desvinculado.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
 components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: |
+        Token de acceso de 15 min. Dos tipos: de usuario (web) y de dispositivo (reloj). Los
+        endpoints `/devices/me*` solo aceptan tokens de dispositivo; el resto, tokens de usuario.
+
+  parameters:
+    Cursor:
+      name: cursor
+      in: query
+      required: false
+      description: Cursor opaco devuelto como `nextCursor` en la página anterior.
+      schema:
+        type: string
+        maxLength: 512
+    Limit:
+      name: limit
+      in: query
+      required: false
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 20
+    PatientIdPath:
+      name: patientId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    ConsentPurposePath:
+      name: purpose
+      in: path
+      required: true
+      schema:
+        $ref: "#/components/schemas/ConsentPurpose"
+
+  responses:
+    Unauthorized:
+      description: Falta el token, es inválido o caducó (o credenciales incorrectas en login).
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    Forbidden:
+      description: Autenticado pero sin permiso (rol, tipo de token o vínculo inactivo).
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    NotFound:
+      description: |
+        No existe o el usuario no tiene acceso (no se distingue para no revelar recursos ajenos).
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    Conflict:
+      description: Conflicto con el estado actual (por ejemplo, correo ya registrado).
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    ValidationError:
+      description: La petición no cumple el esquema.
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/ValidationProblem"
+    TooManyRequests:
+      description: Límite de peticiones superado.
+      headers:
+        Retry-After:
+          description: Segundos hasta poder reintentar.
+          schema:
+            type: integer
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+
   schemas:
+    # ─── Comunes ───────────────────────────────────────────────────────────────
+    Problem:
+      type: object
+      description: Error según RFC 9457.
+      required: [type, title, status, detail, code]
+      properties:
+        type:
+          type: string
+          format: uri-reference
+        title:
+          type: string
+        status:
+          type: integer
+          minimum: 400
+          maximum: 599
+        detail:
+          type: string
+        code:
+          type: string
+          description: Código estable legible por máquina (snake_case).
+        instance:
+          type: string
+          format: uri-reference
+      additionalProperties: true
+    ValidationProblem:
+      allOf:
+        - $ref: "#/components/schemas/Problem"
+        - type: object
+          required: [errors]
+          properties:
+            errors:
+              type: array
+              items:
+                type: object
+                required: [loc, msg, type]
+                properties:
+                  loc:
+                    type: array
+                    items:
+                      oneOf:
+                        - type: string
+                        - type: integer
+                  msg:
+                    type: string
+                  type:
+                    type: string
+    Timezone:
+      type: string
+      description: Zona horaria IANA.
+      examples: [America/Bogota]
+      minLength: 1
+      maxLength: 64
+    DisplayName:
+      type: string
+      minLength: 1
+      maxLength: 80
+    Locale:
+      type: string
+      enum: [es]
+      default: es
+
+    # ─── Salud ─────────────────────────────────────────────────────────────────
     Health:
       type: object
       required: [status]
@@ -82,26 +807,338 @@ components:
             redis:
               type: string
               enum: [ok]
-    Problem:
+
+    # ─── Auth ──────────────────────────────────────────────────────────────────
+    Role:
+      type: string
+      enum: [patient, caregiver]
+    RegisterRequest:
       type: object
-      description: Error según RFC 9457.
-      required: [type, title, status, detail, code]
+      required: [email, password, displayName, role, timezone]
       properties:
-        type:
+        email:
           type: string
-          format: uri-reference
-        title:
+          format: email
+          maxLength: 254
+        password:
           type: string
-        status:
+          format: password
+          minLength: 10
+          maxLength: 128
+        displayName:
+          $ref: "#/components/schemas/DisplayName"
+        role:
+          $ref: "#/components/schemas/Role"
+        timezone:
+          $ref: "#/components/schemas/Timezone"
+        locale:
+          $ref: "#/components/schemas/Locale"
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email:
+          type: string
+          format: email
+          maxLength: 254
+        password:
+          type: string
+          format: password
+          minLength: 1
+          maxLength: 128
+    RefreshRequest:
+      type: object
+      required: [refreshToken]
+      properties:
+        refreshToken:
+          type: string
+          minLength: 1
+          maxLength: 512
+    TokenPair:
+      type: object
+      required: [accessToken, refreshToken, tokenType, expiresIn]
+      properties:
+        accessToken:
+          type: string
+        refreshToken:
+          type: string
+        tokenType:
+          type: string
+          enum: [Bearer]
+        expiresIn:
           type: integer
-          minimum: 400
-          maximum: 599
-        detail:
+          description: Segundos de vida del token de acceso.
+          examples: [900]
+    AuthSession:
+      type: object
+      required: [user, tokens]
+      properties:
+        user:
+          $ref: "#/components/schemas/User"
+        tokens:
+          $ref: "#/components/schemas/TokenPair"
+
+    # ─── Usuario ───────────────────────────────────────────────────────────────
+    User:
+      type: object
+      required: [id, email, displayName, role, timezone, locale, patientId, createdAt]
+      properties:
+        id:
           type: string
+          format: uuid
+        email:
+          type: string
+          format: email
+        displayName:
+          $ref: "#/components/schemas/DisplayName"
+        role:
+          $ref: "#/components/schemas/Role"
+        timezone:
+          $ref: "#/components/schemas/Timezone"
+        locale:
+          $ref: "#/components/schemas/Locale"
+        patientId:
+          description: Perfil de paciente propio (solo rol `patient`).
+          oneOf:
+            - type: string
+              format: uuid
+            - type: "null"
+        createdAt:
+          type: string
+          format: date-time
+    UserUpdate:
+      type: object
+      minProperties: 1
+      properties:
+        displayName:
+          $ref: "#/components/schemas/DisplayName"
+        timezone:
+          $ref: "#/components/schemas/Timezone"
+        locale:
+          $ref: "#/components/schemas/Locale"
+    ConsentPurpose:
+      type: string
+      enum: [health_data, ai_chat, notifications]
+    Consent:
+      type: object
+      required: [purpose, granted, version, updatedAt]
+      properties:
+        purpose:
+          $ref: "#/components/schemas/ConsentPurpose"
+        granted:
+          type: boolean
+        version:
+          description: Versión del texto aceptado (null si nunca se ha respondido).
+          oneOf:
+            - type: string
+            - type: "null"
+        updatedAt:
+          oneOf:
+            - type: string
+              format: date-time
+            - type: "null"
+    ConsentList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Consent"
+    ConsentUpdate:
+      type: object
+      required: [granted, version]
+      properties:
+        granted:
+          type: boolean
+        version:
+          type: string
+          minLength: 1
+          maxLength: 32
+          description: Versión del texto que el usuario vio al decidir.
+
+    # ─── Pacientes ─────────────────────────────────────────────────────────────
+    Patient:
+      type: object
+      required: [id, displayName, timezone, managed, createdAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        displayName:
+          $ref: "#/components/schemas/DisplayName"
+        timezone:
+          $ref: "#/components/schemas/Timezone"
+        managed:
+          type: boolean
+          description: true si no tiene cuenta propia y lo gestionan sus cuidadores.
+        createdAt:
+          type: string
+          format: date-time
+    PatientCreate:
+      type: object
+      required: [displayName, timezone]
+      properties:
+        displayName:
+          $ref: "#/components/schemas/DisplayName"
+        timezone:
+          $ref: "#/components/schemas/Timezone"
+    PatientUpdate:
+      type: object
+      minProperties: 1
+      properties:
+        displayName:
+          $ref: "#/components/schemas/DisplayName"
+        timezone:
+          $ref: "#/components/schemas/Timezone"
+    PatientPage:
+      type: object
+      required: [items, nextCursor]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Patient"
+        nextCursor:
+          oneOf:
+            - type: string
+            - type: "null"
+    CareLink:
+      type: object
+      required: [patientId, caregiverId, caregiverDisplayName, active, createdAt]
+      properties:
+        patientId:
+          type: string
+          format: uuid
+        caregiverId:
+          type: string
+          format: uuid
+        caregiverDisplayName:
+          $ref: "#/components/schemas/DisplayName"
+        active:
+          type: boolean
+        createdAt:
+          type: string
+          format: date-time
+    CareLinkPage:
+      type: object
+      required: [items, nextCursor]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/CareLink"
+        nextCursor:
+          oneOf:
+            - type: string
+            - type: "null"
+    InvitationCode:
+      type: string
+      description: Código de un solo uso, 10 caracteres sin ambigüedades (sin 0/O, 1/I/L).
+      pattern: "^[A-HJKMNP-Z2-9]{10}$"
+    CaregiverInvitation:
+      type: object
+      required: [code, patientId, expiresAt]
+      properties:
         code:
+          $ref: "#/components/schemas/InvitationCode"
+        patientId:
           type: string
-          description: Código estable legible por máquina (snake_case).
-        instance:
+          format: uuid
+        expiresAt:
           type: string
-          format: uri-reference
-      additionalProperties: true
+          format: date-time
+
+    # ─── Reloj ─────────────────────────────────────────────────────────────────
+    UserCode:
+      type: string
+      description: Código corto que muestra el reloj (formato XXXX-XXXX, alfabeto RFC 8628).
+      pattern: "^[BCDFGHJKLMNPQRSTVWXZ]{4}-[BCDFGHJKLMNPQRSTVWXZ]{4}$"
+      examples: [WDJB-MJHT]
+    PairingCodeRequest:
+      type: object
+      required: [model]
+      properties:
+        model:
+          type: string
+          minLength: 1
+          maxLength: 80
+          description: Modelo del reloj (Build.MODEL).
+        appVersion:
+          type: string
+          maxLength: 32
+    PairingCode:
+      type: object
+      required: [code, deviceCode, expiresIn, interval]
+      properties:
+        code:
+          $ref: "#/components/schemas/UserCode"
+        deviceCode:
+          type: string
+          description: Secreto que solo conoce el reloj.
+        expiresIn:
+          type: integer
+          description: Segundos de validez del código.
+          examples: [600]
+        interval:
+          type: integer
+          description: Segundos mínimos entre consultas a `POST /devices/token`.
+          examples: [5]
+    PairingConfirm:
+      type: object
+      required: [patientId]
+      properties:
+        patientId:
+          type: string
+          format: uuid
+    DeviceTokenRequest:
+      type: object
+      required: [deviceCode]
+      properties:
+        deviceCode:
+          type: string
+          minLength: 1
+          maxLength: 256
+    Device:
+      type: object
+      required: [id, patientId, model, pairedAt, lastSeenAt, hasPushToken]
+      properties:
+        id:
+          type: string
+          format: uuid
+        patientId:
+          type: string
+          format: uuid
+        model:
+          type: string
+        pairedAt:
+          type: string
+          format: date-time
+        lastSeenAt:
+          oneOf:
+            - type: string
+              format: date-time
+            - type: "null"
+        hasPushToken:
+          type: boolean
+    DevicePage:
+      type: object
+      required: [items, nextCursor]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Device"
+        nextCursor:
+          oneOf:
+            - type: string
+            - type: "null"
+    PushTokenUpdate:
+      type: object
+      required: [token]
+      properties:
+        token:
+          type: string
+          minLength: 1
+          maxLength: 4096
+          description: Token de registro de FCM.
