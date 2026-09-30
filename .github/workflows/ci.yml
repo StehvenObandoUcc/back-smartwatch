@@ -46,6 +46,7 @@ jobs:
           until docker exec pg pg_isready -U postgres; do sleep 1; done
           export DATABASE_URL=postgresql+asyncpg://postgres:ci@localhost:5432/postgres
           export REDIS_URL=redis://localhost:6379/0
+          export JWT_SECRET=solo-para-ci-no-es-un-secreto-real-0123456789
           uv run alembic upgrade head
           uv run alembic check
 
