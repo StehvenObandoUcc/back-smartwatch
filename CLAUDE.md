@@ -53,6 +53,7 @@ Python 3.13, uv, FastAPI, Pydantic v2, SQLAlchemy 2 async + asyncpg, Alembic, Re
 - Descripción del PR: qué cambia, cómo se probó, qué endpoints del contrato cubre.
 - Decisiones de diseño relevantes: una ADR en `docs/adr/NNNN-titulo.md`.
 - Al cerrar cada fase: `docker compose up` completo y verificación con el reloj (emulador) y la web apuntando a la API real.
+- Al cerrar cada fase, sube `info.x-closed-phase` del contrato a esa fase: la prueba `test_closed_phases_are_fully_implemented` exige entonces que todas las operaciones con `x-phase` menor o igual estén implementadas. Toda operación del contrato lleva `x-phase`.
 
 ## Notificaciones
 - Canales: Telegram (bot con webhook y `secret_token`; vinculación con token de un solo uso vía `https://t.me/<Bot>?start=<token>`, porque el bot solo puede escribir a quien lo inició), correo (Resend, 3.000/mes y 100/día gratis; dominio con SPF, DKIM y DMARC) y FCM para avisar al reloj. WhatsApp NO se usa.
@@ -62,13 +63,15 @@ Python 3.13, uv, FastAPI, Pydantic v2, SQLAlchemy 2 async + asyncpg, Alembic, Re
 - DeepSeek `deepseek-flash` con el SDK `openai` y `base_url=https://api.deepseek.com`, SSE para la web, respuesta corta para el reloj, guardarraíles (no cambia dosis, no diagnostica), límite de mensajes/tokens por usuario y día, registro de tokens.
 
 ## Docker
-`docker compose` levanta PostgreSQL y Redis y lo usan las pruebas (Testcontainers). Confirmado por Steve: se usa Docker (docker compose) para PostgreSQL y Redis en desarrollo y Testcontainers en pruebas.
+Confirmado por Steve. `docker compose` levanta solo PostgreSQL y Redis para desarrollo; la API corre nativa con `uv run`. Las pruebas de integración usan Testcontainers, que también necesita Docker.
+- Postgres se publica en el puerto `5433` del host (configurable con `POSTGRES_PORT`), porque el `5432` lo ocupa un Postgres local. Redis en `6379` (`REDIS_PORT`).
+- Contenedores con límite de memoria; detenlos con `docker compose stop` al terminar.
 
 ## Fases (tu parte)
 0 Fundaciones: esqueleto FastAPI con core/, logging, errores problem+json, /health, Alembic, docker compose, CI.
 1 Cuentas y vinculación: registro, login, refresh rotativo, roles paciente/cuidador, consentimientos, vinculación del reloj por código.
 2 Medicamentos y plan: CRUD, horarios RRULE, plan de 7 días versionado, GET /devices/me/plan con ETag, push FCM al cambiar.
 3 Tomas y adherencia: eventos idempotentes en lote, tarea que marca MISSED, estadísticas cacheadas.
-4 Notificaciones y reportes: outbox + worker, Telegram, correo, reporte semanal PDF, alerta de dosis omitida.
+4 Notificaciones y reportes: outbox + worker, Telegram, correo, reporte semanal PDF, alerta de dosis omitida, verificación de correo y recuperación de contraseña.
 5 IA: chat con DeepSeek (SSE para web, respuesta corta para el reloj), contexto del plan sin datos identificativos, límites.
 6 Lanzamiento: k6, OWASP ASVS nivel 2, backups probados, despliegue.
