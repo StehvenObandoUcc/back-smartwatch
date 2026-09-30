@@ -1,4 +1,5 @@
 import uuid
+from dataclasses import dataclass
 
 from sqlalchemy import Row
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -9,29 +10,46 @@ from app.modules.consents.repository import ConsentRepository
 from app.modules.consents.schemas import ConsentActorOut, ConsentListOut, ConsentOut, Purpose
 
 
+@dataclass(frozen=True, slots=True)
+class Subject:
+    """Titular de los consentimientos: un paciente o (para cuidadores) el propio usuario."""
+
+    user_id: uuid.UUID | None = None
+    patient_id: uuid.UUID | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class Actor:
+    user_id: uuid.UUID
+    display_name: str
+    on_behalf: bool
+
+
 class ConsentService:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
         self._repo = ConsentRepository(session)
 
-    async def list_for_user(self, user_id: uuid.UUID) -> ConsentListOut:
-        return _to_list(await self._repo.latest_for_user(user_id))
+    async def list(self, subject: Subject) -> ConsentListOut:
+        rows = await self._repo.latest(user_id=subject.user_id, patient_id=subject.patient_id)
+        return _to_list(rows)
 
-    async def set_for_user(
-        self, user_id: uuid.UUID, purpose: Purpose, *, granted: bool, version: str, actor_name: str
+    async def set(
+        self, subject: Subject, purpose: Purpose, *, granted: bool, version: str, actor: Actor
     ) -> ConsentOut:
         event = ConsentEvent(
-            subject_user_id=user_id,
+            subject_user_id=subject.user_id,
+            subject_patient_id=subject.patient_id,
             purpose=purpose,
             granted=granted,
             version=version,
-            actor_user_id=user_id,
-            on_behalf=False,
+            actor_user_id=actor.user_id,
+            on_behalf=actor.on_behalf,
             created_at=utcnow(),
         )
         self._repo.add(event)
         await self._session.commit()
-        return _to_out(event, actor_name)
+        return _to_out(event, actor.display_name)
 
 
 def _to_out(event: ConsentEvent, actor_name: str) -> ConsentOut:
