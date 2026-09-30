@@ -2,6 +2,7 @@ openapi: 3.1.0
 info:
   title: API de recordatorios de medicamentos
   version: 0.1.0
+  x-closed-phase: 0
   description: |
     Contrato de la API. Fuente de verdad del backend y del cliente generado por el frontend (Orval).
 
@@ -11,6 +12,9 @@ info:
     - Paginación por cursor (`?cursor=&limit=`) con respuesta `{ items, nextCursor }`.
 
     Fase 0 (Fundaciones): solo endpoints de salud.
+
+    Cada operación lleva `x-phase` (fase en que se implementa). `info.x-closed-phase` es la última
+    fase cerrada: todas sus operaciones deben estar implementadas.
 servers:
   - url: http://localhost:8000
     description: Desarrollo local (docker compose)
@@ -22,6 +26,7 @@ paths:
     get:
       tags: [health]
       operationId: getHealth
+      x-phase: 0
       summary: Liveness
       description: Indica que el proceso está vivo. No consulta dependencias.
       responses:
@@ -35,6 +40,7 @@ paths:
     get:
       tags: [health]
       operationId: getReadiness
+      x-phase: 0
       summary: Readiness
       description: Comprueba las dependencias (Postgres y Redis).
       responses:

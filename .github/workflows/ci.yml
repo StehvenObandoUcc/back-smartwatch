@@ -1,0 +1,73 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    name: Lint, tipos y pruebas
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: Instalar dependencias
+        run: uv sync --locked
+
+      - name: ruff check
+        run: uv run ruff check .
+
+      - name: ruff format
+        run: uv run ruff format --check .
+
+      - name: mypy --strict
+        run: uv run mypy
+
+      # Incluye integración con Testcontainers (Docker viene en el runner) y Schemathesis.
+      - name: pytest
+        run: uv run pytest
+
+      - name: Migraciones sin cambios pendientes
+        run: |
+          docker run -d --name pg -e POSTGRES_PASSWORD=ci -p 5432:5432 postgres:17-alpine
+          until docker exec pg pg_isready -U postgres; do sleep 1; done
+          export DATABASE_URL=postgresql+asyncpg://postgres:ci@localhost:5432/postgres
+          export REDIS_URL=redis://localhost:6379/0
+          uv run alembic upgrade head
+          uv run alembic check
+
+  contract:
+    name: Contrato (oasdiff)
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Cambios incompatibles respecto a la rama base
+        run: |
+          base="origin/${{ github.base_ref }}"
+          if ! git cat-file -e "$base:contracts/openapi.yaml" 2>/dev/null; then
+            echo "La rama base aún no tiene contrato; no hay nada que comparar."
+            exit 0
+          fi
+          mkdir -p /tmp/specs
+          git show "$base:contracts/openapi.yaml" > /tmp/specs/base.yaml
+          cp contracts/openapi.yaml /tmp/specs/revision.yaml
+          docker run --rm -v /tmp/specs:/specs tufin/oasdiff \
+            breaking /specs/base.yaml /specs/revision.yaml --fail-on ERR
