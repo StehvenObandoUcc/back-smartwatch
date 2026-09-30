@@ -14,10 +14,16 @@ info:
 
     Autenticación (`Authorization: Bearer <accessToken>`, JWT de 15 min). Hay dos tipos de sesión:
     - **Usuario (web)**: se abre con `POST /auth/register` o `POST /auth/login` y se renueva con
-      `POST /auth/refresh`. Su token no sirve en `/devices/me/*` (403).
+      `POST /auth/refresh`. El token de acceso va en el JSON; el **refresh token nunca va en el
+      JSON**: viaja solo en la cookie `__Secure-refresh-token` (`HttpOnly; Secure;
+      SameSite=Strict; Path=/auth; Max-Age=2592000`). El navegador la envía sola a `/auth/*`; la
+      web debe llamar con `credentials: "include"`. CORS con credenciales solo para el origen del
+      panel web. `POST /auth/logout` la borra (`Max-Age=0`). Su token de acceso no sirve en
+      `/devices/me/*` (403).
     - **Reloj**: se abre con `POST /devices/token` (`grantType: device_code`) y se renueva con el
-      mismo endpoint (`grantType: refresh_token`). Su token **solo** sirve en `/devices/me/*`; en
-      cualquier otra ruta responde 403. `POST /auth/refresh` rechaza refresh tokens de reloj (401).
+      mismo endpoint (`grantType: refresh_token`). Recibe **ambos tokens en JSON** (no usa
+      cookies). Su token **solo** sirve en `/devices/me/*`; en cualquier otra ruta responde 403.
+      `POST /auth/refresh` rechaza refresh tokens de reloj (401).
     En ambos casos el refresh token es rotativo: cada uso devuelve uno nuevo e invalida el anterior;
     reutilizar uno ya rotado revoca toda la familia (`code: refresh_token_reused`). El refresh token
     de usuario caduca a los 30 días; el del reloj, tras 90 días sin uso. Desvincular un reloj
@@ -114,10 +120,12 @@ paths:
       x-phase: 1
       summary: Crear cuenta
       description: |
-        Crea un usuario y abre sesión. Si `role` es `patient`, en la misma transacción se crea su
-        registro en `/patients` (`managed: false`, con el `displayName` y `timezone` del
+        Crea un usuario y abre sesión web. Si `role` es `patient`, en la misma transacción se crea
+        su registro en `/patients` (`managed: false`, con el `displayName` y `timezone` del
         registro) y `user.patientId` apunta a él. Si `role` es `caregiver`, `user.patientId` es
-        null. Límite de peticiones por IP (429). Sin verificación de correo hasta la fase 4.
+        null. Devuelve el token de acceso en el JSON y el refresh token en la cookie
+        `__Secure-refresh-token`. Límite de peticiones por IP (429). Sin verificación de correo
+        hasta la fase 4.
       security: []
       requestBody:
         required: true
@@ -128,6 +136,9 @@ paths:
       responses:
         "201":
           description: Cuenta creada y sesión abierta.
+          headers:
+            Set-Cookie:
+              $ref: "#/components/headers/SetRefreshCookie"
           content:
             application/json:
               schema:
@@ -144,7 +155,10 @@ paths:
       operationId: login
       x-phase: 1
       summary: Iniciar sesión
-      description: Límite de peticiones por IP y por correo.
+      description: |
+        Abre sesión web: token de acceso en el JSON y refresh token en la cookie
+        `__Secure-refresh-token`. Credenciales incorrectas: 401 (`code: invalid_credentials`),
+        sin distinguir si el correo existe. Límite de peticiones por IP y por correo (429).
       security: []
       requestBody:
         required: true
@@ -155,6 +169,9 @@ paths:
       responses:
         "200":
           description: Sesión abierta.
+          headers:
+            Set-Cookie:
+              $ref: "#/components/headers/SetRefreshCookie"
           content:
             application/json:
               schema:
@@ -170,49 +187,55 @@ paths:
       tags: [auth]
       operationId: refreshTokens
       x-phase: 1
-      summary: Rotar tokens de usuario
+      summary: Renovar la sesión web
       description: |
-        Cambia un refresh token de usuario por un par nuevo. Los relojes renuevan con
-        `POST /devices/token` (`grantType: refresh_token`); un refresh token de reloj aquí da 401.
-        Reutilizar un refresh token ya rotado revoca toda la familia (`code: refresh_token_reused`).
+        Sin cuerpo. Lee el refresh token de la cookie `__Secure-refresh-token`, lo rota y devuelve
+        un token de acceso nuevo en el JSON y el refresh token nuevo en la cookie.
+        - Sin cookie, o refresh token inválido o caducado: 401 y la cookie se borra.
+        - Reutilizar un refresh token ya rotado revoca toda la familia (401,
+          `code: refresh_token_reused`) y la cookie se borra.
+        - Un refresh token de reloj aquí da 401; los relojes renuevan con `POST /devices/token`.
       security: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/RefreshRequest"
+      parameters:
+        - $ref: "#/components/parameters/RefreshCookie"
       responses:
         "200":
-          description: Tokens nuevos.
+          description: Sesión renovada.
+          headers:
+            Set-Cookie:
+              $ref: "#/components/headers/SetRefreshCookie"
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/TokenPair"
+                $ref: "#/components/schemas/AccessToken"
         "401":
-          $ref: "#/components/responses/Unauthorized"
-        "422":
-          $ref: "#/components/responses/ValidationError"
+          description: Sin sesión válida. La respuesta borra la cookie.
+          headers:
+            Set-Cookie:
+              $ref: "#/components/headers/ClearRefreshCookie"
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
   /auth/logout:
     post:
       tags: [auth]
       operationId: logout
       x-phase: 1
-      summary: Cerrar sesión
-      description: Revoca el refresh token indicado (y su familia). Idempotente.
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/RefreshRequest"
+      summary: Cerrar sesión web
+      description: |
+        Sin cuerpo y sin token de acceso (puede haber caducado). Revoca la familia del refresh
+        token de la cookie, si la hay, y borra la cookie. Idempotente: sin cookie también
+        responde 204.
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/RefreshCookie"
       responses:
         "204":
           description: Sesión cerrada.
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-        "422":
-          $ref: "#/components/responses/ValidationError"
+          headers:
+            Set-Cookie:
+              $ref: "#/components/headers/ClearRefreshCookie"
 
   # ─── Fase 1: usuario ─────────────────────────────────────────────────────────
   /users/me:
@@ -807,6 +830,14 @@ components:
         tokens de usuario. El tipo equivocado responde 403 (`code: wrong_token_type`).
 
   parameters:
+    RefreshCookie:
+      name: __Secure-refresh-token
+      in: cookie
+      required: false
+      description: Refresh token de la sesión web. Lo envía el navegador; JavaScript no puede leerlo.
+      schema:
+        type: string
+        maxLength: 512
     Cursor:
       name: cursor
       in: query
@@ -837,6 +868,19 @@ components:
       required: true
       schema:
         $ref: "#/components/schemas/ConsentPurpose"
+
+  headers:
+    SetRefreshCookie:
+      description: |
+        `__Secure-refresh-token=<token>; HttpOnly; Secure; SameSite=Strict; Path=/auth;
+        Max-Age=2592000`
+      schema:
+        type: string
+    ClearRefreshCookie:
+      description: |
+        `__Secure-refresh-token=; HttpOnly; Secure; SameSite=Strict; Path=/auth; Max-Age=0`
+      schema:
+        type: string
 
   responses:
     Unauthorized:
@@ -1013,16 +1057,23 @@ components:
           format: password
           minLength: 1
           maxLength: 128
-    RefreshRequest:
+    AccessToken:
       type: object
-      required: [refreshToken]
+      description: Token de acceso de la sesión web (el refresh token va en la cookie).
+      required: [accessToken, tokenType, expiresIn]
       properties:
-        refreshToken:
+        accessToken:
           type: string
-          minLength: 1
-          maxLength: 512
+        tokenType:
+          type: string
+          enum: [Bearer]
+        expiresIn:
+          type: integer
+          description: Segundos de vida del token de acceso.
+          examples: [900]
     TokenPair:
       type: object
+      description: Tokens del reloj, ambos en JSON (el reloj no usa cookies).
       required: [accessToken, refreshToken, tokenType, expiresIn]
       properties:
         accessToken:
@@ -1043,7 +1094,7 @@ components:
         user:
           $ref: "#/components/schemas/User"
         tokens:
-          $ref: "#/components/schemas/TokenPair"
+          $ref: "#/components/schemas/AccessToken"
 
     # ─── Usuario ───────────────────────────────────────────────────────────────
     User:
