@@ -30,5 +30,15 @@ class ConsentRepository:
         result = await self._session.execute(stmt)
         return list(result.all())
 
+    async def is_granted(self, patient_id: uuid.UUID, purpose: str) -> bool:
+        """Última decisión del paciente para esa finalidad (sin decisión = no concedido)."""
+        result = await self._session.execute(
+            select(ConsentEvent.granted)
+            .where(ConsentEvent.subject_patient_id == patient_id, ConsentEvent.purpose == purpose)
+            .order_by(ConsentEvent.created_at.desc())
+            .limit(1)
+        )
+        return bool(result.scalar_one_or_none())
+
     def add(self, event: ConsentEvent) -> None:
         self._session.add(event)
