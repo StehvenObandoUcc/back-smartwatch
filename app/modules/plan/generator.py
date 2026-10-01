@@ -62,3 +62,9 @@ def plan_doses(rules: list[ScheduleRule], tz: ZoneInfo, now: datetime) -> list[D
     last = first + timedelta(days=PLAN_DAYS - 1)
     doses = [dose for rule in rules for dose in doses_in_range(rule, tz, first, last)]
     return sorted(doses, key=lambda d: d.scheduled_at.astimezone(UTC))
+
+
+def is_scheduled(rule: ScheduleRule, tz: ZoneInfo, instant: datetime) -> bool:
+    """True si la regla genera una dosis exactamente en ese instante."""
+    day = instant.astimezone(tz).date()
+    return any(dose.scheduled_at == instant for dose in doses_in_range(rule, tz, day, day))

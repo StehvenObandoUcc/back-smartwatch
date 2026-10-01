@@ -2,7 +2,7 @@ openapi: 3.1.0
 info:
   title: API de recordatorios de medicamentos
   version: 0.3.0
-  x-closed-phase: 1
+  x-closed-phase: 2
   description: |
     Contrato de la API. Fuente de verdad del backend y de los clientes generados por el frontend
     (Orval para la web, openapi-generator para el reloj Wear OS).
@@ -1164,8 +1164,11 @@ paths:
       description: |
         Dosis ya vencidas, de la más reciente a la más antigua, con su estado. Una dosis sin
         evento cuya hora programada pasó hace más de 60 minutos se informa como `MISSED`
-        (se calcula al consultar). Las dosis futuras o dentro de la ventana de 60 min no
-        aparecen. Rango por defecto: últimos 7 días; máximo 90 días (422 si se supera).
+        (se calcula al consultar). Las dosis sin evento futuras o dentro de la ventana de 60 min
+        no aparecen; una dosis con evento aparece siempre. Solo cuentan las dosis que el horario
+        ya generaba cuando se creó o editó, y mientras el medicamento no estaba archivado.
+        Rango por defecto: últimos 7 días; máximo 90 días, y `from` no puede ser posterior a
+        `to` (422).
       parameters:
         - $ref: "#/components/parameters/Cursor"
         - $ref: "#/components/parameters/Limit"
