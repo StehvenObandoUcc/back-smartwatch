@@ -1,8 +1,8 @@
 openapi: 3.1.0
 info:
   title: API de recordatorios de medicamentos
-  version: 0.2.0
-  x-closed-phase: 0
+  version: 0.3.0
+  x-closed-phase: 1
   description: |
     Contrato de la API. Fuente de verdad del backend y de los clientes generados por el frontend
     (Orval para la web, openapi-generator para el reloj Wear OS).
@@ -50,6 +50,9 @@ info:
     - 0 Fundaciones: salud.
     - 1 Cuentas y vinculación: registro, sesión, perfil, consentimientos, pacientes, cuidadores
       y vinculación del reloj por código (flujo tipo device code, RFC 8628).
+    - 2 Sprint A (plan exprés, fases 2 y 3 juntas): medicamentos, horarios simples (horas del día,
+      días de la semana, fechas de inicio y fin; sin RRULE), plan de 7 días versionado, eventos
+      de toma idempotentes, historial y adherencia. `MISSED` se calcula al consultar.
 servers:
   - url: http://localhost:8000
     description: Desarrollo local
@@ -66,6 +69,12 @@ tags:
     description: Pacientes y sus cuidadores
   - name: devices
     description: Vinculación y gestión del reloj
+  - name: medications
+    description: Medicamentos y horarios de un paciente
+  - name: plan
+    description: Plan de 7 días de un paciente
+  - name: doses
+    description: Eventos de toma, historial y adherencia
 
 paths:
   # ─── Fase 0 ──────────────────────────────────────────────────────────────────
@@ -818,6 +827,396 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  # ─── Sprint A (x-phase 2): medicamentos, horarios, plan, eventos y adherencia ────
+  /patients/{patientId}/medications:
+    parameters:
+      - $ref: "#/components/parameters/PatientIdPath"
+    get:
+      tags: [medications]
+      operationId: listMedications
+      x-phase: 2
+      summary: Medicamentos de un paciente
+      description: |
+        Por defecto solo los activos; `?includeArchived=true` incluye los archivados. Requiere
+        vínculo activo con el paciente (si no, 404) y consentimiento `health_data` del paciente
+        (si no, 403 `consent_required`).
+      parameters:
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+        - name: includeArchived
+          in: query
+          required: false
+          schema:
+            type: boolean
+            default: false
+      responses:
+        "200":
+          description: Página de medicamentos.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MedicationPage"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+    post:
+      tags: [medications]
+      operationId: createMedication
+      x-phase: 2
+      summary: Crear un medicamento
+      description: Sube la versión del plan del paciente. Mismas reglas de acceso y consentimiento que el listado.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MedicationCreate"
+      responses:
+        "201":
+          description: Medicamento creado.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Medication"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+  /patients/{patientId}/medications/{medicationId}:
+    parameters:
+      - $ref: "#/components/parameters/PatientIdPath"
+      - $ref: "#/components/parameters/MedicationIdPath"
+    get:
+      tags: [medications]
+      operationId: getMedication
+      x-phase: 2
+      summary: Un medicamento
+      responses:
+        "200":
+          description: Medicamento.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Medication"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    patch:
+      tags: [medications]
+      operationId: updateMedication
+      x-phase: 2
+      summary: Editar un medicamento
+      description: Actualización parcial. Sube la versión del plan.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MedicationUpdate"
+      responses:
+        "200":
+          description: Medicamento actualizado.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Medication"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+    delete:
+      tags: [medications]
+      operationId: archiveMedication
+      x-phase: 2
+      summary: Archivar un medicamento
+      description: |
+        Borrado lógico: deja de aparecer en el plan pero se conserva su historial de tomas.
+        Idempotente. Sube la versión del plan.
+      responses:
+        "204":
+          description: Medicamento archivado.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /patients/{patientId}/medications/{medicationId}/schedules:
+    parameters:
+      - $ref: "#/components/parameters/PatientIdPath"
+      - $ref: "#/components/parameters/MedicationIdPath"
+    get:
+      tags: [medications]
+      operationId: listSchedules
+      x-phase: 2
+      summary: Horarios de un medicamento
+      responses:
+        "200":
+          description: Horarios (sin paginar; un medicamento tiene pocos).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ScheduleList"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    post:
+      tags: [medications]
+      operationId: createSchedule
+      x-phase: 2
+      summary: Añadir un horario
+      description: Sube la versión del plan. Máximo 10 horarios por medicamento (422 si se supera).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ScheduleCreate"
+      responses:
+        "201":
+          description: Horario creado.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Schedule"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+  /patients/{patientId}/medications/{medicationId}/schedules/{scheduleId}:
+    parameters:
+      - $ref: "#/components/parameters/PatientIdPath"
+      - $ref: "#/components/parameters/MedicationIdPath"
+      - name: scheduleId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    patch:
+      tags: [medications]
+      operationId: updateSchedule
+      x-phase: 2
+      summary: Editar un horario
+      description: |
+        Actualización parcial. Sube la versión del plan. Cambiar las horas de un horario no
+        reescribe las tomas ya registradas: el historial conserva su `scheduledAt` original.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ScheduleUpdate"
+      responses:
+        "200":
+          description: Horario actualizado.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Schedule"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+    delete:
+      tags: [medications]
+      operationId: deleteSchedule
+      x-phase: 2
+      summary: Eliminar un horario
+      description: Idempotente. Sube la versión del plan. Las tomas ya registradas se conservan.
+      responses:
+        "204":
+          description: Horario eliminado.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /devices/me/plan:
+    get:
+      tags: [plan]
+      operationId: getMyPlan
+      x-phase: 2
+      summary: Plan de 7 días del reloj
+      description: |
+        Solo con token de reloj (403 con token de usuario). Devuelve las dosis de los próximos 7
+        días, desde el inicio del día local del paciente, calculadas con su zona horaria.
+        `version` sube con cada cambio de medicamentos u horarios del paciente. El `ETag` cambia
+        cuando cambia la versión o el día local; con `If-None-Match` igual responde 304 sin
+        cuerpo. Si el paciente no ha dado el consentimiento `health_data`, 403
+        (`code: consent_required`).
+      parameters:
+        - name: If-None-Match
+          in: header
+          required: false
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Plan vigente.
+          headers:
+            ETag:
+              description: Validador del plan, p. ej. `"3-2026-10-01"`.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Plan"
+        "304":
+          description: El plan no cambió.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /patients/{patientId}/plan:
+    parameters:
+      - $ref: "#/components/parameters/PatientIdPath"
+    get:
+      tags: [plan]
+      operationId: getPatientPlan
+      x-phase: 2
+      summary: Plan de 7 días de un paciente (agenda web)
+      description: Mismo cuerpo que `GET /devices/me/plan`, sin ETag. Para la agenda de hoy y de la semana.
+      responses:
+        "200":
+          description: Plan vigente.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Plan"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /devices/me/dose-events:
+    post:
+      tags: [doses]
+      operationId: createMyDoseEvents
+      x-phase: 2
+      summary: Subir eventos de toma (lote, idempotente)
+      description: |
+        Solo con token de reloj. Hasta 100 eventos por lote. Idempotente por `eventId`: reenviar un
+        evento ya guardado devuelve `outcome: duplicate` sin duplicar nada. Cada evento se
+        resuelve por separado y el lote responde 200; un evento inválido no hace fallar a los
+        demás. Un evento solo se acepta si `scheduleId` pertenece al paciente del reloj y
+        `scheduledAt` es una hora que ese horario generaba; si no, `outcome: rejected` con
+        `code` (`schedule_not_found`, `invalid_scheduled_at`). Una dosis tiene como mucho un
+        evento: si llega otro `eventId` para la misma dosis (`scheduleId` + `scheduledAt`), gana
+        el primero y el segundo se rechaza con `code: dose_already_recorded`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DoseEventBatch"
+      responses:
+        "200":
+          description: Resultado por evento, en el mismo orden.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DoseEventBatchResult"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+  /patients/{patientId}/dose-history:
+    parameters:
+      - $ref: "#/components/parameters/PatientIdPath"
+    get:
+      tags: [doses]
+      operationId: listDoseHistory
+      x-phase: 2
+      summary: Historial de dosis de un paciente
+      description: |
+        Dosis ya vencidas, de la más reciente a la más antigua, con su estado. Una dosis sin
+        evento cuya hora programada pasó hace más de 60 minutos se informa como `MISSED`
+        (se calcula al consultar). Las dosis futuras o dentro de la ventana de 60 min no
+        aparecen. Rango por defecto: últimos 7 días; máximo 90 días (422 si se supera).
+      parameters:
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/FromQuery"
+        - $ref: "#/components/parameters/ToQuery"
+      responses:
+        "200":
+          description: Página del historial.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DoseHistoryPage"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+  /patients/{patientId}/adherence:
+    parameters:
+      - $ref: "#/components/parameters/PatientIdPath"
+    get:
+      tags: [doses]
+      operationId: getAdherence
+      x-phase: 2
+      summary: Porcentaje de adherencia de un paciente
+      description: |
+        `percentage = taken / (taken + skipped + missed) * 100` sobre las dosis vencidas del
+        rango (mismas reglas y rango por defecto que el historial). `null` si no hubo dosis
+        vencidas.
+      parameters:
+        - $ref: "#/components/parameters/FromQuery"
+        - $ref: "#/components/parameters/ToQuery"
+      responses:
+        "200":
+          description: Adherencia del rango.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Adherence"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
 components:
   securitySchemes:
     bearerAuth:
@@ -868,6 +1267,30 @@ components:
       required: true
       schema:
         $ref: "#/components/schemas/ConsentPurpose"
+
+    MedicationIdPath:
+      name: medicationId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    FromQuery:
+      name: from
+      in: query
+      required: false
+      description: Inicio del rango (inclusive), fecha local del paciente.
+      schema:
+        type: string
+        format: date
+    ToQuery:
+      name: to
+      in: query
+      required: false
+      description: Fin del rango (inclusive), fecha local del paciente.
+      schema:
+        type: string
+        format: date
 
   headers:
     SetRefreshCookie:
@@ -1402,3 +1825,355 @@ components:
           minLength: 1
           maxLength: 4096
           description: Token de registro de FCM.
+
+    # ─── Sprint A: medicamentos, horarios, plan, eventos, adherencia ──────────────
+    Color:
+      type: string
+      pattern: "^#[0-9A-Fa-f]{6}$"
+      examples: ["#3B82F6"]
+    Medication:
+      type: object
+      required: [id, patientId, name, dosage, color, archived, createdAt, updatedAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        patientId:
+          type: string
+          format: uuid
+        name:
+          type: string
+        dosage:
+          type: string
+          description: Dosis por toma en texto libre ("1 tableta", "5 ml").
+        instructions:
+          type: [string, "null"]
+        color:
+          $ref: "#/components/schemas/Color"
+        archived:
+          type: boolean
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    MedicationCreate:
+      type: object
+      required: [name, dosage]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 120
+        dosage:
+          type: string
+          minLength: 1
+          maxLength: 80
+        instructions:
+          type: [string, "null"]
+          maxLength: 500
+        color:
+          $ref: "#/components/schemas/Color"
+    MedicationUpdate:
+      type: object
+      minProperties: 1
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 120
+        dosage:
+          type: string
+          minLength: 1
+          maxLength: 80
+        instructions:
+          type: [string, "null"]
+          maxLength: 500
+        color:
+          $ref: "#/components/schemas/Color"
+    MedicationPage:
+      type: object
+      required: [items, nextCursor]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Medication"
+        nextCursor:
+          oneOf:
+            - type: string
+            - type: "null"
+    LocalTime:
+      type: string
+      pattern: "^([01][0-9]|2[0-3]):[0-5][0-9]$"
+      description: Hora local del paciente, HH:MM de 24 h.
+      examples: ["08:00"]
+    DayOfWeek:
+      type: integer
+      minimum: 1
+      maximum: 7
+      description: ISO 8601, 1 = lunes … 7 = domingo.
+    Schedule:
+      type: object
+      required: [id, medicationId, times, daysOfWeek, startDate, endDate]
+      properties:
+        id:
+          type: string
+          format: uuid
+        medicationId:
+          type: string
+          format: uuid
+        times:
+          type: array
+          description: Horas del día, sin repetir, ordenadas.
+          minItems: 1
+          maxItems: 12
+          uniqueItems: true
+          items:
+            $ref: "#/components/schemas/LocalTime"
+        daysOfWeek:
+          type: array
+          minItems: 1
+          maxItems: 7
+          uniqueItems: true
+          items:
+            $ref: "#/components/schemas/DayOfWeek"
+        startDate:
+          type: string
+          format: date
+          description: Primer día del tratamiento (fecha local del paciente).
+        endDate:
+          oneOf:
+            - type: string
+              format: date
+            - type: "null"
+          description: Último día (inclusive); `null` = sin fin.
+    ScheduleCreate:
+      type: object
+      required: [times, daysOfWeek, startDate]
+      properties:
+        times:
+          type: array
+          minItems: 1
+          maxItems: 12
+          uniqueItems: true
+          items:
+            $ref: "#/components/schemas/LocalTime"
+        daysOfWeek:
+          type: array
+          minItems: 1
+          maxItems: 7
+          uniqueItems: true
+          items:
+            $ref: "#/components/schemas/DayOfWeek"
+        startDate:
+          type: string
+          format: date
+        endDate:
+          oneOf:
+            - type: string
+              format: date
+            - type: "null"
+          description: Debe ser mayor o igual que `startDate`.
+    ScheduleUpdate:
+      type: object
+      minProperties: 1
+      properties:
+        times:
+          type: array
+          minItems: 1
+          maxItems: 12
+          uniqueItems: true
+          items:
+            $ref: "#/components/schemas/LocalTime"
+        daysOfWeek:
+          type: array
+          minItems: 1
+          maxItems: 7
+          uniqueItems: true
+          items:
+            $ref: "#/components/schemas/DayOfWeek"
+        startDate:
+          type: string
+          format: date
+        endDate:
+          oneOf:
+            - type: string
+              format: date
+            - type: "null"
+    ScheduleList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Schedule"
+    PlannedDose:
+      type: object
+      required: [scheduleId, medicationId, medicationName, dosage, color, scheduledAt]
+      properties:
+        scheduleId:
+          type: string
+          format: uuid
+        medicationId:
+          type: string
+          format: uuid
+        medicationName:
+          type: string
+        dosage:
+          type: string
+        instructions:
+          type: [string, "null"]
+        color:
+          $ref: "#/components/schemas/Color"
+        scheduledAt:
+          type: string
+          format: date-time
+          description: Instante de la dosis con el desfase de la zona del paciente. La dosis se identifica por `scheduleId` + `scheduledAt`.
+    Plan:
+      type: object
+      required: [version, patientTimezone, generatedAt, validFrom, validUntil, doses]
+      properties:
+        version:
+          type: integer
+          minimum: 0
+          description: Sube con cada cambio de medicamentos u horarios del paciente.
+        patientTimezone:
+          $ref: "#/components/schemas/Timezone"
+        generatedAt:
+          type: string
+          format: date-time
+        validFrom:
+          type: string
+          format: date-time
+          description: Inicio del día local del paciente en que se generó.
+        validUntil:
+          type: string
+          format: date-time
+          description: Fin del séptimo día (exclusivo).
+        doses:
+          type: array
+          description: Ordenadas por `scheduledAt`.
+          items:
+            $ref: "#/components/schemas/PlannedDose"
+    DoseEventStatus:
+      type: string
+      enum: [TAKEN, SKIPPED]
+    DoseEventInput:
+      type: object
+      required: [eventId, scheduleId, scheduledAt, status, actedAt]
+      properties:
+        eventId:
+          type: string
+          format: uuid
+          description: Generado por el reloj; clave de idempotencia.
+        scheduleId:
+          type: string
+          format: uuid
+        scheduledAt:
+          type: string
+          format: date-time
+        status:
+          $ref: "#/components/schemas/DoseEventStatus"
+        actedAt:
+          type: string
+          format: date-time
+          description: Cuándo pulsó el paciente en el reloj.
+    DoseEventBatch:
+      type: object
+      required: [events]
+      properties:
+        events:
+          type: array
+          minItems: 1
+          maxItems: 100
+          items:
+            $ref: "#/components/schemas/DoseEventInput"
+    DoseEventResult:
+      type: object
+      required: [eventId, outcome]
+      properties:
+        eventId:
+          type: string
+          format: uuid
+        outcome:
+          type: string
+          enum: [created, duplicate, rejected]
+        code:
+          type: [string, "null"]
+          description: Presente solo si `rejected`.
+    DoseEventBatchResult:
+      type: object
+      required: [results]
+      properties:
+        results:
+          type: array
+          items:
+            $ref: "#/components/schemas/DoseEventResult"
+    DoseStatus:
+      type: string
+      enum: [TAKEN, SKIPPED, MISSED]
+    DoseHistoryItem:
+      type: object
+      required: [scheduleId, medicationId, medicationName, dosage, scheduledAt, status, actedAt]
+      properties:
+        scheduleId:
+          type: string
+          format: uuid
+        medicationId:
+          type: string
+          format: uuid
+        medicationName:
+          type: string
+        dosage:
+          type: string
+        scheduledAt:
+          type: string
+          format: date-time
+        status:
+          $ref: "#/components/schemas/DoseStatus"
+        actedAt:
+          oneOf:
+            - type: string
+              format: date-time
+            - type: "null"
+          description: "`null` si `MISSED`."
+    DoseHistoryPage:
+      type: object
+      required: [items, nextCursor]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/DoseHistoryItem"
+        nextCursor:
+          oneOf:
+            - type: string
+            - type: "null"
+    Adherence:
+      type: object
+      required: [from, to, taken, skipped, missed, percentage]
+      properties:
+        from:
+          type: string
+          format: date
+        to:
+          type: string
+          format: date
+        taken:
+          type: integer
+          minimum: 0
+        skipped:
+          type: integer
+          minimum: 0
+        missed:
+          type: integer
+          minimum: 0
+        percentage:
+          oneOf:
+            - type: number
+              minimum: 0
+              maximum: 100
+            - type: "null"
