@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from sqlalchemy import Row
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.errors import ForbiddenError
 from app.core.security import utcnow
 from app.modules.consents.models import PURPOSES, ConsentEvent
 from app.modules.consents.repository import ConsentRepository
@@ -33,6 +34,13 @@ class ConsentService:
     async def list(self, subject: Subject) -> ConsentListOut:
         rows = await self._repo.latest(user_id=subject.user_id, patient_id=subject.patient_id)
         return _to_list(rows)
+
+    async def require_health_data(self, patient_id: uuid.UUID) -> None:
+        if not await self._repo.is_granted(patient_id, "health_data"):
+            raise ForbiddenError(
+                "consent_required",
+                "El paciente no ha dado el consentimiento para tratar sus datos de salud.",
+            )
 
     async def set(
         self, subject: Subject, purpose: Purpose, *, granted: bool, version: str, actor: Actor

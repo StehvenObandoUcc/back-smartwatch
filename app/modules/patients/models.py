@@ -23,6 +23,8 @@ class Patient(UuidPk, CreatedAt, Base):
         ForeignKey("users.id", ondelete="CASCADE")
     )
     updated_at: Mapped[datetime] = mapped_column(server_default=func.now(), onupdate=func.now())
+    # Sube con cada cambio de medicamentos u horarios; es la `version` del plan y base del ETag.
+    plan_version: Mapped[int] = mapped_column(server_default="0")
 
     @property
     def managed(self) -> bool:
