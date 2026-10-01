@@ -84,6 +84,12 @@ class PatientService:
             raise patient_not_found()
         return PatientAccess(patient=patient, is_owner=patient.owner_user_id == user.id)
 
+    async def health_access(self, user: CurrentUser, patient_id: uuid.UUID) -> Patient:
+        """Acceso al paciente más su consentimiento `health_data` (medicamentos, plan, tomas)."""
+        patient = (await self.access(user, patient_id)).patient
+        await self._consents.require_health_data(patient_id)
+        return patient
+
     async def _manageable(self, user: CurrentUser, patient_id: uuid.UUID) -> PatientAccess:
         """Acceso para acciones del titular: el propio paciente o, si es gestionado, un cuidador."""
         access = await self.access(user, patient_id)
