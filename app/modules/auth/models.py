@@ -24,8 +24,9 @@ class RefreshToken(UuidPk, CreatedAt, Base):
     user_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("users.id", ondelete="CASCADE"), index=True
     )
-    # Sesión de reloj (la FK a devices la añade el módulo devices).
-    device_id: Mapped[uuid.UUID | None] = mapped_column(index=True)
+    device_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("devices.id", ondelete="CASCADE"), index=True
+    )
     expires_at: Mapped[datetime]
     rotated_at: Mapped[datetime | None]
     revoked_at: Mapped[datetime | None]

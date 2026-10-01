@@ -2,7 +2,7 @@ import re
 from typing import Annotated
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from pydantic import AfterValidator, BaseModel, ConfigDict, Field
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, field_validator
 from pydantic.alias_generators import to_camel
 
 
@@ -10,6 +10,14 @@ class ApiModel(BaseModel):
     """Base de los esquemas públicos: camelCase en JSON, snake_case en Python."""
 
     model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True, frozen=True)
+
+    @field_validator("*", mode="after")
+    @classmethod
+    def _no_nul_bytes(cls, value: object) -> object:
+        # Postgres no admite el carácter NUL en `text`: se rechaza como 422, no como 500.
+        if isinstance(value, str) and "\x00" in value:
+            raise ValueError("El texto no puede contener el carácter NUL")
+        return value
 
 
 # Nombres IANA: letras, dígitos y _+-, separados por "/". Filtra antes de tocar el sistema de

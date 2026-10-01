@@ -12,6 +12,8 @@ from app.core.logging import configure_logging
 from app.core.middleware import RequestContextMiddleware
 from app.core.security import AccessTokenService, PasswordService
 from app.modules.auth.router import router as auth_router
+from app.modules.devices.router import device_active_check
+from app.modules.devices.router import router as devices_router
 from app.modules.health.router import router as health_router
 from app.modules.patients.router import router as patients_router
 from app.modules.users.router import router as users_router
@@ -46,6 +48,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.settings = settings
     app.state.passwords = PasswordService(settings)
     app.state.access_tokens = AccessTokenService(settings)
+    app.state.device_active_check = device_active_check
 
     app.add_middleware(
         CORSMiddleware,
@@ -63,4 +66,5 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(auth_router)
     app.include_router(users_router)
     app.include_router(patients_router)
+    app.include_router(devices_router)
     return app

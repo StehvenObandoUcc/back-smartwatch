@@ -42,6 +42,10 @@ class Settings(BaseSettings):
     user_refresh_ttl_days: int = 30
     device_refresh_idle_days: int = 90
 
+    # Vinculación del reloj (RFC 8628)
+    pairing_code_ttl_seconds: int = 600
+    pairing_poll_interval_seconds: int = 5
+
     # Argon2id (valores por defecto de argon2-cffi / RFC 9106 "low memory").
     argon2_time_cost: int = 3
     argon2_memory_cost_kib: int = 65536
@@ -54,6 +58,10 @@ class Settings(BaseSettings):
     rate_invitation_patient: RateLimit = RateLimit(limit=10, window_seconds=86400)
     rate_invitation_accept_user: RateLimit = RateLimit(limit=10, window_seconds=900)
     rate_invitation_accept_ip: RateLimit = RateLimit(limit=30, window_seconds=900)
+    rate_pairing_create_ip: RateLimit = RateLimit(limit=10, window_seconds=3600)
+    rate_pairing_confirm_user: RateLimit = RateLimit(limit=10, window_seconds=900)
+    rate_pairing_confirm_ip: RateLimit = RateLimit(limit=30, window_seconds=900)
+    rate_device_token_ip: RateLimit = RateLimit(limit=120, window_seconds=60)
 
 
 @lru_cache
