@@ -15,7 +15,9 @@ from app.modules.auth.router import router as auth_router
 from app.modules.devices.router import device_active_check
 from app.modules.devices.router import router as devices_router
 from app.modules.health.router import router as health_router
+from app.modules.medications.router import router as medications_router
 from app.modules.patients.router import router as patients_router
+from app.modules.plan.router import router as plan_router
 from app.modules.users.router import router as users_router
 
 
@@ -39,7 +41,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     docs_enabled = settings.app_env == "local"
     app = FastAPI(
         title="API de recordatorios de medicamentos",
-        version="0.2.0",
+        version="0.3.0",
         lifespan=lifespan,
         openapi_url="/openapi.json" if docs_enabled else None,
         docs_url="/docs" if docs_enabled else None,
@@ -67,4 +69,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(users_router)
     app.include_router(patients_router)
     app.include_router(devices_router)
+    app.include_router(medications_router)
+    app.include_router(plan_router)
     return app

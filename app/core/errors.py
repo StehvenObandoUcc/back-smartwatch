@@ -105,6 +105,17 @@ class ConflictError(DomainError):
     default_title = "Conflicto"
 
 
+class UnprocessableError(DomainError):
+    """422 con la misma forma que un error de esquema, para reglas que cruzan campos o estado."""
+
+    status_code = 422
+    default_title = "Datos no válidos"
+
+    def __init__(self, loc: list[str | int], msg: str) -> None:
+        super().__init__("validation_error", "La petición no cumple las reglas del recurso.")
+        self.extra = {"errors": [{"loc": loc, "msg": msg, "type": "value_error"}]}
+
+
 class RateLimitedError(DomainError):
     status_code = 429
     default_title = "Demasiadas peticiones"
