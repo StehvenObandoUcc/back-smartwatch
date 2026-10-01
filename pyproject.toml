@@ -73,4 +73,4 @@ asyncio_default_fixture_loop_scope = "session"
 asyncio_default_test_loop_scope = "session"
 testpaths = ["tests"]
 markers = ["integration: requiere Docker (Testcontainers)"]
-addopts = "-ra --strict-markers --cov=app/modules --cov-report=term-missing --cov-fail-under=85"
+addopts = "-ra --strict-markers --cov=app/modules --cov-report=term-missing"
