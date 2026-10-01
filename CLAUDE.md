@@ -8,7 +8,7 @@ Eres el Agente Backend del proyecto de recordatorios de medicamentos. El product
 
 ## Contrato primero
 - `contracts/openapi.yaml` es la fuente de verdad. Eres su dueño.
-- Al empezar cada fase, abre un PR que **solo** cambie el contrato con los endpoints de la fase. No implementes hasta que Steve lo apruebe.
+- Al empezar cada sprint, abre un PR que **solo** cambie el contrato con todas las operaciones del sprint. Con el plan exprés (`docs/plan-expres.md`) lo fusionas tú cuando la CI esté en verde y avisas a Steve en una línea; él revisa al final del sprint.
 - Nunca hagas un cambio incompatible en un endpoint publicado; crea uno nuevo o versiona. CI corre oasdiff.
 - Errores en formato RFC 9457 (`application/problem+json`) con `type`, `title`, `status`, `detail`, `code`.
 - Nombres: rutas en kebab-case y plural (`/dose-events`), campos JSON en camelCase (alias de Pydantic), fechas en ISO 8601 con zona, IDs UUID.
@@ -43,10 +43,12 @@ Python 3.13, uv, FastAPI, Pydantic v2, SQLAlchemy 2 async + asyncpg, Alembic, Re
 - Nunca registres en logs datos de salud ni tokens. Al chat IA no se envía nombre, documento ni contacto.
 - Consentimientos (`health_data`, `ai_chat`, `notifications`) se comprueban antes de procesar.
 
-## Pruebas (obligatorias en cada PR)
-- Unitarias de servicios, integración con Postgres real (Testcontainers), Schemathesis contra `openapi.yaml`.
-- Cobertura mínima 85 % en `modules/`.
-- `ruff check`, `ruff format --check`, `mypy --strict` y `pytest` deben pasar localmente antes de hacer push.
+## Pruebas (plan exprés)
+- En local solo `ruff check`, `ruff format --check`, `mypy --strict` y `pytest tests/unit`. Las de integración (Testcontainers) corren en CI.
+- Pruebas exigidas en cada PR: autorización (una por regla), generación del plan, idempotencia de eventos y adherencia. El resto es opcional.
+- Pospuestos hasta el cierre del proyecto: Schemathesis, OpenTelemetry y cobertura del 85 % en `modules/` (el umbral ya no está en `addopts`).
+- Los agentes fusionan solos cuando la CI está en verde; si algo no se puede poner en verde, se detienen y avisan.
+- Local en Windows: usa `uv run python -m mypy` y `uv run python -m pytest` (el lanzador `uv run mypy` falla).
 
 ## Flujo de trabajo
 - Una rama y un PR por tarea (`feat/api-<tema>`), commits convencionales, PR pequeños.
@@ -70,8 +72,7 @@ Confirmado por Steve. `docker compose` levanta solo PostgreSQL y Redis para desa
 ## Fases (tu parte)
 0 Fundaciones: esqueleto FastAPI con core/, logging, errores problem+json, /health, Alembic, docker compose, CI.
 1 Cuentas y vinculación: registro, login, refresh rotativo, roles paciente/cuidador, consentimientos, vinculación del reloj por código.
-2 Medicamentos y plan: CRUD, horarios RRULE, plan de 7 días versionado, GET /devices/me/plan con ETag, push FCM al cambiar.
-3 Tomas y adherencia: eventos idempotentes en lote, tarea que marca MISSED, estadísticas cacheadas.
-4 Notificaciones y reportes: outbox + worker, Telegram, correo, reporte semanal PDF, alerta de dosis omitida, verificación de correo y recuperación de contraseña.
-5 IA: chat con DeepSeek (SSE para web, respuesta corta para el reloj), contexto del plan sin datos identificativos, límites.
-6 Lanzamiento: k6, OWASP ASVS nivel 2, backups probados, despliegue.
+Plan exprés v3 (`docs/plan-expres.md`) sustituye las fases 2 a 6:
+- Sprint A (fases 2+3): medicamentos, horarios simples (sin RRULE), plan de 7 días versionado con ETag, eventos de toma idempotentes, historial y adherencia. Sin FCM ni worker arq; MISSED se calcula al consultar.
+- Sprint B (fases 4+5): worker arq y outbox, Telegram, correo, reporte semanal, alerta de dosis omitida, verificación de correo y recuperación de contraseña, chat con DeepSeek.
+- Cierre: FCM, Schemathesis, OpenTelemetry, cobertura 85 %, k6, ASVS, backups y despliegue.
