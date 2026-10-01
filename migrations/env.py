@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import create_async_engine
 # Cada módulo registra aquí sus modelos para que autogenerate los vea.
 import app.modules.auth.models
 import app.modules.consents.models
+import app.modules.devices.models
 import app.modules.patients.models
 import app.modules.users.models  # noqa: F401
 from app.core.config import get_settings
