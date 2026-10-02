@@ -21,6 +21,8 @@ uv run python -m uvicorn app.main:create_app --factory --reload
 - `GET http://localhost:8000/health` y `GET http://localhost:8000/health/ready`
 - Documentación interactiva (solo `APP_ENV=local`): http://localhost:8000/docs
 
+Para probar con las claves reales de Resend, Telegram y DeepSeek: [`docs/claves-reales.md`](docs/claves-reales.md). Para que el emulador del reloj o un teléfono alcancen la API, arráncala con `--host 0.0.0.0`.
+
 ## Worker (correo y avisos)
 
 Los correos no se envían dentro de la petición: se encolan en `notifications_outbox` y los entrega un worker de [arq](https://arq-docs.helpmanual.io/) (cada 15 s, con reintentos y backoff). Con `EMAIL_PROVIDER=console` (por defecto en local) los escribe en su log; con `resend` usa la API de Resend (hace falta `RESEND_API_KEY`).
