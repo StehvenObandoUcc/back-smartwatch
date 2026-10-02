@@ -215,6 +215,47 @@ else
   skip "Generación del reporte y PDF (la hace el worker: usa VERIFY_WORKER=1)"
 fi
 
+# ── Paso 5: chat con IA (CHAT_PROVIDER=fake: responde sin red ni clave) ─────────────────────────
+request POST "/patients/$PATIENT/chat/messages" '{"message":"Que me toca esta noche?"}' "$TOKEN"
+expect_eq "Sin consentimiento ai_chat el chat responde 403" "403" "$STATUS"
+expect_eq "El código es consent_required" "consent_required" "$(jget code)"
+request PUT "/patients/$PATIENT/consents/ai_chat" '{"granted":true,"version":"2026-10"}' "$TOKEN"
+expect_eq "Otorgar el consentimiento ai_chat del paciente" "200" "$STATUS"
+
+request POST "/patients/$PATIENT/chat/messages" '{"message":"Que me toca esta noche?","history":[{"role":"user","content":"Hola"},{"role":"assistant","content":"Hola"}]}' "$TOKEN"
+expect_eq "El chat web responde 200" "200" "$STATUS"
+grep -qi '^content-type: text/event-stream' "$HDRS" && ok "La respuesta es text/event-stream (SSE)" || fail "La respuesta es text/event-stream (SSE)"
+case "$BODY" in *"event: delta"*"event: done"*) ok "El flujo trae eventos delta y termina con done" ;; *) fail "El flujo trae eventos delta y termina con done" "$BODY" ;; esac
+case "$BODY" in *'"remainingMessages": 29'*) ok "Quedan 29 mensajes (cupo diario de 30)" ;; *) fail "Quedan 29 mensajes (cupo diario de 30)" "$BODY" ;; esac
+case "$BODY" in *'"text": "Respuesta "'*'"text": "noche?"'*) ok "El proveedor simulado recibió la pregunta (la repite en los trozos)" ;; *) fail "El proveedor simulado recibió la pregunta" "$BODY" ;; esac
+
+request POST "/patients/$PATIENT/chat/messages" '{"message":""}' "$TOKEN"
+expect_eq "Un mensaje vacío responde 422" "422" "$STATUS"
+
+# El reloj: se vincula al paciente y pregunta por voz (respuesta corta en JSON).
+request POST /devices/pairing-codes '{"model":"Script de verificacion"}'
+need_json "El reloj pide un código de vinculación" code
+WATCH_CODE="$VALUE"
+need_json "El reloj pide un código de vinculación" deviceCode
+WATCH_DEVICE_CODE="$VALUE"
+request POST "/devices/pairing-codes/$WATCH_CODE/confirm" "{\"patientId\":\"$PATIENT\"}" "$TOKEN"
+expect_eq "El cuidador vincula el reloj al paciente" "200" "$STATUS"
+request POST /devices/token "{\"grantType\":\"device_code\",\"deviceCode\":\"$WATCH_DEVICE_CODE\"}"
+need_json "El reloj recibe su token" accessToken
+WATCH="$VALUE"
+
+request POST /devices/me/chat/messages '{"message":"Que me toca esta noche?"}' "$WATCH"
+expect_eq "El chat del reloj responde 200" "200" "$STATUS"
+expect_eq "La respuesta corta llega en JSON" "Respuesta simulada a: Que me toca esta noche?" "$(jget reply)"
+expect_eq "El cupo del reloj es aparte del de la web (quedan 29)" "29" "$(jget remainingMessages)"
+request POST /devices/me/chat/messages '{"message":"Que me toca esta noche?"}' "$TOKEN"
+expect_eq "Un token de usuario no sirve en el chat del reloj (403)" "403" "$STATUS"
+request GET /users/me "" "$TOKEN"
+USER_ID="$(jget id)"
+request GET /devices/me "" "$WATCH"
+DEVICE_ID="$(jget id)"
+expect_eq "Se contó un mensaje de la web y uno del reloj (solo contadores, sin texto)" "1 1" "$(db_query "SELECT string_agg(messages::text, ' ') FROM chat_usage WHERE principal_id IN ('$USER_ID', '$DEVICE_ID')")"
+
 webhook "$(tg_update "/stop")"
 expect_eq "/stop responde 200" "200" "$STATUS"
 request GET /users/me/notification-channels "" "$TOKEN"

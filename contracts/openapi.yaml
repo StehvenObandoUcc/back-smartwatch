@@ -1,8 +1,8 @@
 openapi: 3.1.0
 info:
   title: API de recordatorios de medicamentos
-  version: 0.4.0
-  x-closed-phase: 2
+  version: 0.5.0
+  x-closed-phase: 3
   description: |
     Contrato de la API. Fuente de verdad del backend y de los clientes generados por el frontend
     (Orval para la web, openapi-generator para el reloj Wear OS).
@@ -1606,8 +1606,8 @@ paths:
         - `event: done` con `data: {"remainingMessages": 27}` al terminar.
         - `event: error` con `data: {"code": "chat_unavailable"}` si el proveedor falla a medias.
         Los errores previos al flujo (sin acceso, sin consentimiento, límite) son problem+json
-        normales con su código HTTP. Requiere vínculo con el paciente (404 si no) y consentimiento
-        `ai_chat` del paciente (403 `consent_required`).
+        normales con su código HTTP. Requiere vínculo con el paciente (404 si no) y los consentimientos
+        `health_data` y `ai_chat` del paciente (403 `consent_required`): el modelo recibe su plan.
 
         El asistente conoce el plan del paciente (medicamentos, dosis y horarios) sin nombre,
         documento ni datos de contacto. No cambia dosis ni diagnostica. Sin estado en el servidor:
@@ -1656,7 +1656,7 @@ paths:
       summary: Preguntar al asistente desde el reloj (respuesta corta)
       description: |
         Solo con token de reloj (403 con token de usuario). Mismas reglas, guardarraíles y
-        consentimiento (`ai_chat` del paciente) que el chat web, pero responde JSON sin streaming y
+        consentimientos (`health_data` y `ai_chat` del paciente) que el chat web, pero responde JSON sin streaming y
         con una respuesta corta (como máximo 3 frases, sin listas ni formato) para leerla en voz
         alta. El límite diario cuenta por reloj.
       requestBody:
