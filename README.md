@@ -21,6 +21,16 @@ uv run python -m uvicorn app.main:create_app --factory --reload
 - `GET http://localhost:8000/health` y `GET http://localhost:8000/health/ready`
 - Documentación interactiva (solo `APP_ENV=local`): http://localhost:8000/docs
 
+## Worker (correo y avisos)
+
+Los correos no se envían dentro de la petición: se encolan en `notifications_outbox` y los entrega un worker de [arq](https://arq-docs.helpmanual.io/) (cada 15 s, con reintentos y backoff). Con `EMAIL_PROVIDER=console` (por defecto en local) los escribe en su log; con `resend` usa la API de Resend (hace falta `RESEND_API_KEY`).
+
+```sh
+PYTHONUTF8=1 uv run python -m arq app.worker.main.WorkerSettings   # otra terminal; Ctrl+C para parar
+```
+
+(`PYTHONUTF8=1` evita errores de codificación al registrar flechas de arq en la consola de Windows.)
+
 ## Verificar en local
 
 Recorrido completo del sprint A contra la API real (Windows, Git Bash, desde la raíz del repo). Hace falta Docker Desktop abierto y `curl` y `python` en el PATH (vienen con Git Bash y Python). Una sola vez: `cp .env.example .env` y `uv sync`. Los comandos usan `uv run python -m ...` porque en esta máquina Windows el lanzador `uv run alembic` / `uv run uvicorn` falla con `uv trampoline failed to canonicalize script path`.
@@ -49,6 +59,8 @@ Recorrido completo del sprint A contra la API real (Windows, Git Bash, desde la 
    bash scripts/verify-sprint-a.sh
    bash scripts/verify-sprint-b.sh   # sprint B, sin claves reales (lee los correos del outbox en Postgres)
    ```
+
+   Con el worker arrancado (y `OUTBOX_SCRUB_PAYLOAD=false`, que ya trae `.env.example`), `VERIFY_WORKER=1 bash scripts/verify-sprint-b.sh` comprueba también que el correo se entrega.
 
 Imprime `OK` o `FALLÓ` por cada paso y termina con código distinto de cero si algo falla (`echo $?`). Cubre: registro de cuidador, paciente gestionado, consentimiento `health_data`, medicamento con horario, vinculación del reloj, plan con ETag y 304, lote de tomas con reenvío (`duplicate`), historial y adherencia. Cada ejecución crea un usuario nuevo; el registro admite 5 por hora desde la misma IP (si da 429: `docker compose exec redis redis-cli FLUSHDB`).
 

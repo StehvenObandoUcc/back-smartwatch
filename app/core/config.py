@@ -1,7 +1,7 @@
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import BaseModel, PostgresDsn, RedisDsn, SecretStr
+from pydantic import BaseModel, PostgresDsn, RedisDsn, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -46,6 +46,18 @@ class Settings(BaseSettings):
     email_verify_ttl_hours: int = 24
     password_reset_ttl_minutes: int = 60
 
+    # Correo y outbox (las claves solo por variables de entorno)
+    email_provider: Literal["console", "resend"] = "console"
+    resend_api_key: SecretStr | None = None
+    email_from: str = "Recordatorios <no-reply@localhost>"
+    outbox_max_attempts: int = 5
+    outbox_batch_size: int = 20
+    outbox_retry_base_seconds: int = 60
+    outbox_retry_max_seconds: int = 3600
+    # Tras entregar, el outbox borra los parámetros del mensaje (llevan enlaces con tokens).
+    # Solo desarrollo: ponerlo en false para poder leer los enlaces en la tabla.
+    outbox_scrub_payload: bool = True
+
     # Vinculación del reloj (RFC 8628)
     pairing_code_ttl_seconds: int = 600
     pairing_poll_interval_seconds: int = 5
@@ -71,6 +83,14 @@ class Settings(BaseSettings):
     rate_forgot_password_ip: RateLimit = RateLimit(limit=10, window_seconds=3600)
     rate_forgot_password_email: RateLimit = RateLimit(limit=3, window_seconds=3600)
     rate_reset_password_ip: RateLimit = RateLimit(limit=20, window_seconds=900)
+
+    @model_validator(mode="after")
+    def _email_provider_is_usable(self) -> "Settings":
+        if self.email_provider == "resend" and self.resend_api_key is None:
+            raise ValueError("EMAIL_PROVIDER=resend requiere RESEND_API_KEY")
+        if self.email_provider == "console" and self.app_env in ("staging", "production"):
+            raise ValueError("EMAIL_PROVIDER=console escribe enlaces en el log: solo local y test")
+        return self
 
 
 @lru_cache
