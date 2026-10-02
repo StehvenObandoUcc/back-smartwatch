@@ -2,12 +2,25 @@
 # Recorrido del sprint B contra la API local, sin claves reales de Resend, Telegram ni DeepSeek.
 # Uso: bash scripts/verify-sprint-b.sh        (BASE_URL=http://localhost:8000 por defecto)
 # Lee los enlaces de los correos de la tabla notifications_outbox (docker compose debe estar arriba).
+# Con VERIFY_WORKER=1 comprueba además que el worker entrega el correo (arráncalo antes con
+# OUTBOX_SCRUB_PAYLOAD=false y EMAIL_PROVIDER=console; ver README).
 # Cada paso imprime OK o FALLÓ; al primer fallo se detiene con código 1.
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 PASSWORD="Verifica-sprint-B-2026"
 NEW_PASSWORD="Otra-clave-sprint-B-2027"
 EMAIL="verifica.b.$(date +%s).$RANDOM@example.com"
+
+# wait_sent KIND: espera hasta 45 s a que el último mensaje de ese tipo pase a 'sent'
+wait_sent() {
+  local status="" i
+  for i in $(seq 1 45); do
+    status="$(db_query "SELECT status FROM notifications_outbox WHERE kind = '$1' ORDER BY created_at DESC LIMIT 1")"
+    [ "$status" = "sent" ] && return 0
+    sleep 1
+  done
+  fail "El worker entrega el correo '$1' (estado final: ${status:-sin mensaje})" "¿está corriendo el worker? (uv run python -m arq app.worker.main.WorkerSettings)"
+}
 
 # outbox_token KIND [N]: token del enlace del N-ésimo (último por defecto) correo de ese tipo
 outbox_token() {
@@ -33,6 +46,10 @@ expect_eq "El usuario nace con el correo sin verificar" "false" "$(jget user.ema
 
 FIRST="$(outbox_token verify_email)"
 ok "El registro encoló el correo de verificación en el outbox"
+if [ "${VERIFY_WORKER:-0}" = "1" ]; then
+  wait_sent verify_email
+  ok "El worker entregó el correo de verificación (estado sent)"
+fi
 
 request POST /auth/resend-verification "" "$TOKEN"
 expect_eq "Reenviar la verificación responde 202" "202" "$STATUS"
