@@ -12,6 +12,7 @@ import app.modules.doses.models
 import app.modules.medications.models
 import app.modules.notifications.models
 import app.modules.patients.models
+import app.modules.reports.models
 import app.modules.users.models  # noqa: F401
 from app.core.config import get_settings
 from app.core.db import Base
