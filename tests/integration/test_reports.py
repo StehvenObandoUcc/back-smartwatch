@@ -19,6 +19,8 @@ from tests.integration.conftest import AppFactory
 from tests.integration.helpers import assert_problem, bearer, register
 from tests.integration.notify_helpers import (
     MONDAY_8AM,
+    PAST_END,
+    PAST_NOW,
     Scenario,
     consent,
     make_scenario,
@@ -44,10 +46,12 @@ async def _reports(db: AsyncEngine) -> list[dict[str, Any]]:
         return [dict(row._mapping) for row in rows]
 
 
-async def _week_of_events(db: AsyncEngine, scenario: Scenario) -> None:
-    """Semana del 5 al 11 de octubre: 4 tomadas, 1 omitida por el paciente y 2 sin registrar."""
-    for day, status in [(5, "TAKEN"), (6, "TAKEN"), (7, "TAKEN"), (8, "TAKEN"), (9, "SKIPPED")]:
-        await record_event(db, scenario, f"2026-10-{day:02d}T08:00:00-05:00", status)
+async def _week_of_events(db: AsyncEngine, scenario: Scenario, monday: str = "2026-10-05") -> None:
+    """Una semana desde el lunes: 4 tomadas, 1 omitida por el paciente y 2 sin registrar."""
+    first = date.fromisoformat(monday)
+    statuses = ["TAKEN", "TAKEN", "TAKEN", "TAKEN", "SKIPPED"]
+    for offset, status in enumerate(statuses):
+        await record_event(db, scenario, f"{first + timedelta(days=offset)}T08:00:00-05:00", status)
 
 
 # ─── Reportes semanales ───────────────────────────────────────────────────────
@@ -196,11 +200,11 @@ async def test_manual_reports_do_not_notify(
     created = await client.post(
         f"/patients/{scenario.patient_id}/reports",
         headers=bearer(scenario.caregiver),
-        json={"periodEnd": "2026-10-11"},
+        json={"periodEnd": PAST_END},
     )
     assert created.status_code == 202
 
-    await _processor(db_engine, integration_settings).process_pending(MONDAY_8AM)
+    await _processor(db_engine, integration_settings).process_pending(PAST_NOW)
 
     assert (await _reports(db_engine))[0]["status"] == "ready"
     assert await outbox(db_engine, "weekly_report") == []
@@ -214,28 +218,25 @@ async def test_a_failed_report_notifies_nobody_and_can_be_retried(
 ) -> None:
     scenario = await make_scenario(client, db_engine)
     processor = _processor(db_engine, integration_settings)
-    await processor.create_weekly(MONDAY_8AM)
+    url = f"/patients/{scenario.patient_id}/reports"
+    await client.post(url, headers=bearer(scenario.caregiver), json={"periodEnd": PAST_END})
 
     def boom(*_: Any) -> bytes:
         raise RuntimeError("Ana Metformina")
 
     monkeypatch.setattr(processor_module, "build_pdf", boom)
-    await processor.process_pending(MONDAY_8AM)
+    await processor.process_pending(PAST_NOW)
 
     assert (await _reports(db_engine))[0]["status"] == "failed"
     assert await outbox(db_engine, "weekly_report") == []
-    assert (
-        await processor.process_pending(MONDAY_8AM) == 0
-    )  # un reporte fallido no se reintenta solo
+    assert await processor.process_pending(PAST_NOW) == 0  # un fallido no se reintenta solo
 
     monkeypatch.undo()
     retried = await client.post(
-        f"/patients/{scenario.patient_id}/reports",
-        headers=bearer(scenario.caregiver),
-        json={"periodEnd": "2026-10-11"},
+        url, headers=bearer(scenario.caregiver), json={"periodEnd": PAST_END}
     )
     assert retried.json()["status"] == "pending"
-    await processor.process_pending(MONDAY_8AM)
+    await processor.process_pending(PAST_NOW)
     assert (await _reports(db_engine))[0]["status"] == "ready"
 
 
@@ -265,9 +266,9 @@ async def test_create_report_is_asynchronous_and_idempotent_by_period(
     scenario = await make_scenario(client, db_engine)
     url = f"/patients/{scenario.patient_id}/reports"
 
-    first = await client.post(url, headers=bearer(scenario.owner), json={"periodEnd": "2026-10-11"})
+    first = await client.post(url, headers=bearer(scenario.owner), json={"periodEnd": PAST_END})
     second = await client.post(
-        url, headers=bearer(scenario.caregiver), json={"periodEnd": "2026-10-11"}
+        url, headers=bearer(scenario.caregiver), json={"periodEnd": PAST_END}
     )
 
     body = first.json()
@@ -278,7 +279,7 @@ async def test_create_report_is_asynchronous_and_idempotent_by_period(
         None,
         None,
     )
-    assert (body["periodStart"], body["periodEnd"]) == ("2026-10-05", "2026-10-11")
+    assert (body["periodStart"], body["periodEnd"]) == ("2026-09-21", PAST_END)
     assert second.json()["id"] == body["id"]
     assert len(await _reports(db_engine)) == 1
 
@@ -305,17 +306,15 @@ async def test_report_lifecycle_through_the_api(
     client: AsyncClient, db_engine: AsyncEngine, integration_settings: Settings
 ) -> None:
     scenario = await make_scenario(client, db_engine)
-    await _week_of_events(db_engine, scenario)
+    await _week_of_events(db_engine, scenario, "2026-09-21")
     base = f"/patients/{scenario.patient_id}/reports"
     created = (
-        await client.post(
-            base, headers=bearer(scenario.caregiver), json={"periodEnd": "2026-10-11"}
-        )
+        await client.post(base, headers=bearer(scenario.caregiver), json={"periodEnd": PAST_END})
     ).json()
 
     pending = await client.get(f"{base}/{created['id']}", headers=bearer(scenario.caregiver))
     not_ready = await client.get(f"{base}/{created['id']}/pdf", headers=bearer(scenario.caregiver))
-    await _processor(db_engine, integration_settings).process_pending(MONDAY_8AM)
+    await _processor(db_engine, integration_settings).process_pending(PAST_NOW)
     ready = await client.get(f"{base}/{created['id']}", headers=bearer(scenario.caregiver))
     pdf = await client.get(f"{base}/{created['id']}/pdf", headers=bearer(scenario.caregiver))
 
@@ -328,7 +327,7 @@ async def test_report_lifecycle_through_the_api(
     assert body["summary"]["byMedication"][0]["taken"] == 4
     assert pdf.status_code == 200
     assert pdf.headers["content-type"] == "application/pdf"
-    assert pdf.headers["content-disposition"] == 'attachment; filename="reporte-2026-10-11.pdf"'
+    assert pdf.headers["content-disposition"] == 'attachment; filename="reporte-2026-09-27.pdf"'
     assert pdf.content.startswith(b"%PDF")
 
 
@@ -337,7 +336,7 @@ async def test_list_reports_newest_first_with_cursor(
 ) -> None:
     scenario = await make_scenario(client, db_engine)
     url = f"/patients/{scenario.patient_id}/reports"
-    for end in ("2026-10-04", "2026-10-11", "2026-10-18"):
+    for end in ("2026-09-13", "2026-09-20", PAST_END):
         await client.post(url, headers=bearer(scenario.owner), json={"periodEnd": end})
 
     first = (await client.get(url + "?limit=2", headers=bearer(scenario.owner))).json()
@@ -347,8 +346,8 @@ async def test_list_reports_newest_first_with_cursor(
         )
     ).json()
 
-    assert [r["periodEnd"] for r in first["items"]] == ["2026-10-18", "2026-10-11"]
-    assert [r["periodEnd"] for r in second["items"]] == ["2026-10-04"]
+    assert [r["periodEnd"] for r in first["items"]] == [PAST_END, "2026-09-20"]
+    assert [r["periodEnd"] for r in second["items"]] == ["2026-09-13"]
     assert second["nextCursor"] is None
 
 
@@ -359,7 +358,7 @@ async def test_report_routes_authorization(client: AsyncClient, db_engine: Async
     scenario = await make_scenario(client, db_engine)
     base = f"/patients/{scenario.patient_id}/reports"
     report = (
-        await client.post(base, headers=bearer(scenario.owner), json={"periodEnd": "2026-10-11"})
+        await client.post(base, headers=bearer(scenario.owner), json={"periodEnd": PAST_END})
     ).json()
     stranger = await register(client, role="caregiver")
     routes = [
@@ -400,7 +399,7 @@ async def test_reports_of_another_patient_are_404(
         await client.post(
             f"/patients/{other.patient_id}/reports",
             headers=bearer(other.owner),
-            json={"periodEnd": "2026-10-11"},
+            json={"periodEnd": PAST_END},
         )
     ).json()
 
@@ -446,7 +445,7 @@ async def test_report_requests_are_rate_limited_per_patient(
         (
             await strict_client.post(url, headers=bearer(scenario.owner), json={"periodEnd": end})
         ).status_code
-        for end in ("2026-10-04", "2026-10-11", "2026-10-18")
+        for end in ("2026-09-13", "2026-09-20", PAST_END)
     ]
     stranger = await register(strict_client, role="caregiver")
     hidden = await strict_client.post(url, headers=bearer(stranger))
