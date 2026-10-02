@@ -15,7 +15,9 @@ class AccountToken(UuidPk, CreatedAt, Base):
 
     __tablename__ = "account_tokens"
     __table_args__ = (
-        CheckConstraint("purpose IN ('verify_email', 'reset_password')", name="purpose"),
+        CheckConstraint(
+            "purpose IN ('verify_email', 'reset_password', 'link_telegram')", name="purpose"
+        ),
         Index("ix_account_tokens_user_purpose", "user_id", "purpose"),
     )
 

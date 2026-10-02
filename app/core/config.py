@@ -1,3 +1,4 @@
+import re
 from functools import lru_cache
 from typing import Literal
 
@@ -58,6 +59,12 @@ class Settings(BaseSettings):
     # Solo desarrollo: ponerlo en false para poder leer los enlaces en la tabla.
     outbox_scrub_payload: bool = True
 
+    # Telegram (el token del bot y el secreto del webhook solo por variables de entorno)
+    telegram_bot_token: SecretStr | None = None
+    telegram_bot_username: str | None = None
+    telegram_webhook_secret: SecretStr | None = None
+    telegram_link_ttl_minutes: int = 15
+
     # Vinculación del reloj (RFC 8628)
     pairing_code_ttl_seconds: int = 600
     pairing_poll_interval_seconds: int = 5
@@ -83,6 +90,7 @@ class Settings(BaseSettings):
     rate_forgot_password_ip: RateLimit = RateLimit(limit=10, window_seconds=3600)
     rate_forgot_password_email: RateLimit = RateLimit(limit=3, window_seconds=3600)
     rate_reset_password_ip: RateLimit = RateLimit(limit=20, window_seconds=900)
+    rate_telegram_link_user: RateLimit = RateLimit(limit=5, window_seconds=3600)
 
     @model_validator(mode="after")
     def _email_provider_is_usable(self) -> "Settings":
@@ -90,6 +98,11 @@ class Settings(BaseSettings):
             raise ValueError("EMAIL_PROVIDER=resend requiere RESEND_API_KEY")
         if self.email_provider == "console" and self.app_env in ("staging", "production"):
             raise ValueError("EMAIL_PROVIDER=console escribe enlaces en el log: solo local y test")
+        secret = self.telegram_webhook_secret
+        if secret is not None and not re.fullmatch(
+            r"[A-Za-z0-9_-]{16,256}", secret.get_secret_value()
+        ):
+            raise ValueError("TELEGRAM_WEBHOOK_SECRET: 16-256 caracteres entre A-Z a-z 0-9 _ -")
         return self
 
 
