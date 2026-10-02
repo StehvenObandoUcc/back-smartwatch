@@ -15,6 +15,7 @@ def to_user_out(user: User, patient_id: uuid.UUID | None) -> UserOut:
     return UserOut(
         id=user.id,
         email=user.email,
+        email_verified=user.email_verified_at is not None,
         display_name=user.display_name,
         role=user.role,
         timezone=user.timezone,

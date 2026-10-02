@@ -13,6 +13,7 @@ Locale = Literal["es"]
 class UserOut(ApiModel):
     id: uuid.UUID
     email: str
+    email_verified: bool
     display_name: str
     role: Role
     timezone: str
