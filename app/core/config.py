@@ -65,6 +65,10 @@ class Settings(BaseSettings):
     telegram_webhook_secret: SecretStr | None = None
     telegram_link_ttl_minutes: int = 15
 
+    # Avisos y reportes
+    missed_alert_lookback_hours: int = 6
+    report_batch_size: int = 10
+
     # Vinculación del reloj (RFC 8628)
     pairing_code_ttl_seconds: int = 600
     pairing_poll_interval_seconds: int = 5
@@ -91,6 +95,7 @@ class Settings(BaseSettings):
     rate_forgot_password_email: RateLimit = RateLimit(limit=3, window_seconds=3600)
     rate_reset_password_ip: RateLimit = RateLimit(limit=20, window_seconds=900)
     rate_telegram_link_user: RateLimit = RateLimit(limit=5, window_seconds=3600)
+    rate_report_patient: RateLimit = RateLimit(limit=5, window_seconds=3600)
 
     @model_validator(mode="after")
     def _email_provider_is_usable(self) -> "Settings":

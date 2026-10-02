@@ -40,5 +40,15 @@ class ConsentRepository:
         )
         return bool(result.scalar_one_or_none())
 
+    async def is_granted_for_user(self, user_id: uuid.UUID, purpose: str) -> bool:
+        """Última decisión del propio usuario (cuidadores) para esa finalidad."""
+        result = await self._session.execute(
+            select(ConsentEvent.granted)
+            .where(ConsentEvent.subject_user_id == user_id, ConsentEvent.purpose == purpose)
+            .order_by(ConsentEvent.created_at.desc())
+            .limit(1)
+        )
+        return bool(result.scalar_one_or_none())
+
     def add(self, event: ConsentEvent) -> None:
         self._session.add(event)
