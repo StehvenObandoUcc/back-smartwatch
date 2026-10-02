@@ -45,6 +45,9 @@ def configure_logging(level: str, *, json: bool) -> None:
 
     # Uvicorn y SQLAlchemy siguen usando logging estándar; se alinean al mismo nivel.
     logging.basicConfig(level=level, stream=sys.stdout, format="%(message)s")
+    # httpx registra cada URL a nivel INFO, y la de Telegram lleva el token del bot.
+    for noisy in ("httpx", "httpcore"):
+        logging.getLogger(noisy).setLevel(logging.WARNING)
 
 
 def get_logger(name: str) -> structlog.stdlib.BoundLogger:

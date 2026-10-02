@@ -1374,6 +1374,12 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "429":
           $ref: "#/components/responses/TooManyRequests"
+        "503":
+          description: "El bot no está configurado en el servidor (`code: telegram_not_configured`)."
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
   /users/me/notification-channels/telegram:
     delete:
       tags: [notifications]
@@ -1467,6 +1473,8 @@ paths:
           description: Actualización recibida.
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "422":
+          $ref: "#/components/responses/ValidationError"
   /patients/{patientId}/reports:
     parameters:
       - $ref: "#/components/parameters/PatientIdPath"

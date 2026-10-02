@@ -6,7 +6,7 @@ from typing import Any, Protocol
 import httpx
 
 from app.core.logging import get_logger
-from app.modules.notifications.templates import render_email
+from app.modules.notifications.templates import render_email, render_telegram
 
 logger = get_logger(__name__)
 
@@ -74,3 +74,29 @@ class ResendEmailSender:
             # 429 y 5xx son transitorios; el resto (clave mala, dirección inválida) no mejora.
             transient = response.status_code == 429 or response.status_code >= 500
             raise DeliveryError(f"resend: http {response.status_code}", retryable=transient)
+
+
+class TelegramSender:
+    """Envía por la Bot API. El token va en la URL: nunca se registra (ver `configure_logging`)."""
+
+    def __init__(self, client: httpx.AsyncClient, bot_token: str) -> None:
+        self._client = client
+        self._url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+
+    async def send(self, message: Message) -> None:
+        text = render_telegram(message.kind, message.payload)
+        try:
+            response = await self._client.post(
+                self._url,
+                json={
+                    "chat_id": message.payload["chat_id"],
+                    "text": text,
+                    "disable_web_page_preview": True,
+                },
+            )
+        except httpx.HTTPError as exc:
+            raise DeliveryError(f"telegram: {type(exc).__name__}", retryable=True) from None
+        if response.status_code >= 400:
+            # 403 (el usuario bloqueó el bot) y 400 (chat inexistente) no mejoran reintentando.
+            transient = response.status_code == 429 or response.status_code >= 500
+            raise DeliveryError(f"telegram: http {response.status_code}", retryable=transient)

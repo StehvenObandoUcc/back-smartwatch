@@ -17,6 +17,7 @@ from app.modules.devices.router import router as devices_router
 from app.modules.doses.router import router as doses_router
 from app.modules.health.router import router as health_router
 from app.modules.medications.router import router as medications_router
+from app.modules.notifications.router import router as notifications_router
 from app.modules.patients.router import router as patients_router
 from app.modules.plan.router import router as plan_router
 from app.modules.users.router import router as users_router
@@ -73,4 +74,5 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(medications_router)
     app.include_router(plan_router)
     app.include_router(doses_router)
+    app.include_router(notifications_router)
     return app
