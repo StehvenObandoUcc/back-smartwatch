@@ -14,7 +14,12 @@ from app.core.config import Settings, get_settings
 from app.core.db import create_engine, create_session_factory
 from app.core.logging import configure_logging
 from app.modules.notifications.dispatcher import Dispatcher
-from app.modules.notifications.senders import ConsoleEmailSender, ResendEmailSender, Sender
+from app.modules.notifications.senders import (
+    ConsoleEmailSender,
+    ResendEmailSender,
+    Sender,
+    TelegramSender,
+)
 
 
 def build_senders(settings: Settings, client: httpx.AsyncClient) -> dict[str, Sender]:
@@ -25,7 +30,11 @@ def build_senders(settings: Settings, client: httpx.AsyncClient) -> dict[str, Se
         email: Sender = ResendEmailSender(client, key.get_secret_value(), settings.email_from)
     else:
         email = ConsoleEmailSender()
-    return {"email": email}
+    senders: dict[str, Sender] = {"email": email}
+    # Sin token de bot no se registra el canal: los mensajes de Telegram quedan pendientes.
+    if settings.telegram_bot_token is not None:
+        senders["telegram"] = TelegramSender(client, settings.telegram_bot_token.get_secret_value())
+    return senders
 
 
 async def startup(ctx: dict[str, Any]) -> None:
