@@ -64,6 +64,18 @@ def after_cursor(
     return or_(created_at > at, and_(created_at == at, row_id > last_id))
 
 
+def before_cursor(
+    created_at: InstrumentedAttribute[datetime],
+    row_id: InstrumentedAttribute[uuid.UUID],
+    cursor: Cursor | None,
+) -> ColumnElement[bool] | None:
+    """Como `after_cursor`, para listas del más reciente al más antiguo (created_at, id)."""
+    if cursor is None:
+        return None
+    at, last_id = cursor
+    return or_(created_at < at, and_(created_at == at, row_id < last_id))
+
+
 def next_cursor[T](
     rows: list[T], limit: int, key: Callable[[T], Cursor]
 ) -> tuple[list[T], str | None]:

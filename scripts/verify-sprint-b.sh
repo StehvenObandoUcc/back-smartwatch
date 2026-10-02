@@ -145,11 +145,75 @@ expect_eq "El token de un solo uso genera la respuesta de enlace inválido" "1" 
 
 request GET /users/me/notification-preferences "" "$TOKEN"
 expect_eq "Las preferencias empiezan con todo activado" "true" "$(jget weeklyReport.telegram)"
-request PUT /users/me/notification-preferences '{"missedDose":{"email":false,"telegram":true},"weeklyReport":{"email":true,"telegram":false}}' "$TOKEN"
+request PUT /users/me/notification-preferences '{"missedDose":{"email":true,"telegram":true},"weeklyReport":{"email":true,"telegram":false}}' "$TOKEN"
 expect_eq "Guardar las preferencias responde 200" "200" "$STATUS"
 request GET /users/me/notification-preferences "" "$TOKEN"
-expect_eq "Las preferencias guardadas se leen igual (missedDose.email)" "false" "$(jget missedDose.email)"
+expect_eq "Las preferencias guardadas se leen igual (weeklyReport.email)" "true" "$(jget weeklyReport.email)"
 expect_eq "Las preferencias guardadas se leen igual (weeklyReport.telegram)" "false" "$(jget weeklyReport.telegram)"
+
+# ── Paso 4: alerta de dosis omitida y reporte semanal ───────────────────────────────────────────
+skip() { STEP=$((STEP + 1)); printf 'OMITIDO %2d. %s\n' "$STEP" "$1"; }
+
+request PUT /users/me/consents/notifications '{"granted":true,"version":"2026-10"}' "$TOKEN"
+expect_eq "El cuidador otorga el consentimiento notifications" "200" "$STATUS"
+request POST /patients '{"displayName":"Abuela","timezone":"America/Bogota"}' "$TOKEN"
+need_json "Crear un paciente gestionado" id
+PATIENT="$VALUE"
+request PUT "/patients/$PATIENT/consents/health_data" '{"granted":true,"version":"2026-10"}' "$TOKEN"
+expect_eq "Otorgar health_data del paciente" "200" "$STATUS"
+request POST "/patients/$PATIENT/medications" '{"name":"Metformina","dosage":"1 tableta"}' "$TOKEN"
+need_json "Crear un medicamento" id
+MEDICATION="$VALUE"
+# Una dosis que venció hace 90 minutos (hora de Bogotá, UTC-5): ya pasó la gracia de 60.
+DOSE_TIME="$("$PY" -c 'from datetime import datetime, timedelta, timezone; print((datetime.now(timezone(timedelta(hours=-5))) - timedelta(minutes=90)).strftime("%H:%M"))')"
+YESTERDAY="$("$PY" -c 'from datetime import datetime, timedelta, timezone; print((datetime.now(timezone(timedelta(hours=-5))) - timedelta(days=1)).date())')"
+request POST "/patients/$PATIENT/medications/$MEDICATION/schedules" "{\"times\":[\"$DOSE_TIME\"],\"daysOfWeek\":[1,2,3,4,5,6,7],\"startDate\":\"$YESTERDAY\"}" "$TOKEN"
+need_json "Crear un horario con una dosis vencida (a las $DOSE_TIME)" id
+SCHEDULE="$VALUE"
+# El horario "existía" desde antes (si no, las dosis anteriores a su creación no cuentan como omitidas).
+db_query "UPDATE schedules SET effective_from = now() - interval '2 days' WHERE id = '$SCHEDULE'" >/dev/null
+ok "El horario existía desde antes de la dosis (ajuste directo en la base)"
+
+if [ "${VERIFY_WORKER:-0}" = "1" ]; then
+  ALERTS=0
+  for i in $(seq 1 90); do
+    ALERTS="$(db_query "SELECT count(*) FROM notifications_outbox WHERE kind = 'missed_dose' AND (payload->>'to' = '$EMAIL' OR payload->>'chat_id' = '$CHAT')")"
+    [ "$ALERTS" = "2" ] && break
+    sleep 1
+  done
+  expect_eq "El worker encoló la alerta de dosis omitida (correo y Telegram)" "2" "$ALERTS"
+  expect_eq "La alerta no incluye el medicamento" "0" "$(db_query "SELECT count(*) FROM notifications_outbox WHERE kind = 'missed_dose' AND payload::text LIKE '%Metformina%'")"
+else
+  skip "Alerta de dosis omitida (el worker la genera cada minuto: usa VERIFY_WORKER=1)"
+fi
+
+request POST "/patients/$PATIENT/reports" "" "$TOKEN"
+expect_eq "Pedir un reporte responde 202" "202" "$STATUS"
+expect_eq "El reporte nace pendiente" "pending" "$(jget status)"
+REPORT="$(jget id)"
+request POST "/patients/$PATIENT/reports" "" "$TOKEN"
+expect_eq "Pedirlo otra vez devuelve el mismo reporte" "$REPORT" "$(jget id)"
+request GET "/patients/$PATIENT/reports" "" "$TOKEN"
+expect_eq "El listado incluye el reporte" "$REPORT" "$(jget items.0.id)"
+
+if [ "${VERIFY_WORKER:-0}" = "1" ]; then
+  REPORT_STATUS=""
+  for i in $(seq 1 60); do
+    request GET "/patients/$PATIENT/reports/$REPORT" "" "$TOKEN"
+    REPORT_STATUS="$(jget status)"
+    [ "$REPORT_STATUS" = "ready" ] && break
+    sleep 1
+  done
+  expect_eq "El worker genera el reporte (ready)" "ready" "$REPORT_STATUS"
+  expect_eq "El resumen cuenta la dosis sin registrar" "1" "$(jget summary.missed)"
+  curl -sS -o "$WORK/reporte.pdf" -D "$HDRS" -H "Authorization: Bearer $TOKEN" "$BASE/patients/$PATIENT/reports/$REPORT/pdf"
+  expect_eq "El PDF es un PDF" "%PDF" "$(head -c 4 "$WORK/reporte.pdf")"
+  grep -qi '^content-type: application/pdf' "$HDRS" && ok "El PDF llega como application/pdf" || fail "El PDF llega como application/pdf"
+else
+  request GET "/patients/$PATIENT/reports/$REPORT/pdf" "" "$TOKEN"
+  expect_eq "Sin generar, el PDF responde 409" "409" "$STATUS"
+  skip "Generación del reporte y PDF (la hace el worker: usa VERIFY_WORKER=1)"
+fi
 
 webhook "$(tg_update "/stop")"
 expect_eq "/stop responde 200" "200" "$STATUS"

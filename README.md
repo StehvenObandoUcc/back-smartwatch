@@ -31,6 +31,8 @@ PYTHONUTF8=1 uv run python -m arq app.worker.main.WorkerSettings   # otra termin
 
 (`PYTHONUTF8=1` evita errores de codificación al registrar flechas de arq en la consola de Windows.)
 
+El mismo worker hace las tareas programadas: entrega del outbox (cada 15 s), alerta de dosis omitida (cada minuto), generación de reportes pendientes (cada 10 s) y creación del reporte semanal (cada hora; el lunes a las 08:00 locales de cada paciente). Con el worker parado, la API sigue funcionando y los avisos se acumulan.
+
 ## Telegram
 
 Con `TELEGRAM_BOT_USERNAME` y `TELEGRAM_WEBHOOK_SECRET` (valores de desarrollo en `.env.example`) ya funcionan los endpoints de vinculación y el webhook; el script de verificación hace de Telegram. Para un bot real hacen falta `TELEGRAM_BOT_TOKEN` (de @BotFather, solo por variable de entorno) y una URL HTTPS pública:
@@ -69,7 +71,7 @@ Recorrido completo del sprint A contra la API real (Windows, Git Bash, desde la 
    bash scripts/verify-sprint-b.sh   # sprint B, sin claves reales (lee los correos del outbox en Postgres)
    ```
 
-   Con el worker arrancado (y `OUTBOX_SCRUB_PAYLOAD=false`, que ya trae `.env.example`), `VERIFY_WORKER=1 bash scripts/verify-sprint-b.sh` comprueba también que el correo se entrega.
+   Con el worker arrancado (y `OUTBOX_SCRUB_PAYLOAD=false`, que ya trae `.env.example`), `VERIFY_WORKER=1 bash scripts/verify-sprint-b.sh` comprueba también lo que hace el worker: entrega del correo, alerta de dosis omitida (tarda hasta un minuto) y generación del reporte con su PDF. Sin esa variable esos pasos se marcan `OMITIDO`.
 
 Imprime `OK` o `FALLÓ` por cada paso y termina con código distinto de cero si algo falla (`echo $?`). Cubre: registro de cuidador, paciente gestionado, consentimiento `health_data`, medicamento con horario, vinculación del reloj, plan con ETag y 304, lote de tomas con reenvío (`duplicate`), historial y adherencia. Cada ejecución crea un usuario nuevo; el registro admite 5 por hora desde la misma IP (si da 429: `docker compose exec redis redis-cli FLUSHDB`).
 
