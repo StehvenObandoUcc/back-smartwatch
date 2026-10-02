@@ -65,6 +65,16 @@ class Settings(BaseSettings):
     telegram_webhook_secret: SecretStr | None = None
     telegram_link_ttl_minutes: int = 15
 
+    # Chat con IA (la clave de DeepSeek solo por variable de entorno)
+    chat_provider: Literal["deepseek", "fake"] = "fake"
+    deepseek_api_key: SecretStr | None = None
+    deepseek_base_url: str = "https://api.deepseek.com"
+    deepseek_model: str = "deepseek-flash"
+    chat_daily_messages: int = 30
+    chat_timeout_seconds: float = 20.0
+    chat_web_max_tokens: int = 500
+    chat_watch_max_tokens: int = 150
+
     # Avisos y reportes
     missed_alert_lookback_hours: int = 6
     report_batch_size: int = 10
@@ -96,6 +106,7 @@ class Settings(BaseSettings):
     rate_reset_password_ip: RateLimit = RateLimit(limit=20, window_seconds=900)
     rate_telegram_link_user: RateLimit = RateLimit(limit=5, window_seconds=3600)
     rate_report_patient: RateLimit = RateLimit(limit=5, window_seconds=3600)
+    rate_chat_user: RateLimit = RateLimit(limit=10, window_seconds=60)
 
     @model_validator(mode="after")
     def _email_provider_is_usable(self) -> "Settings":
@@ -103,6 +114,10 @@ class Settings(BaseSettings):
             raise ValueError("EMAIL_PROVIDER=resend requiere RESEND_API_KEY")
         if self.email_provider == "console" and self.app_env in ("staging", "production"):
             raise ValueError("EMAIL_PROVIDER=console escribe enlaces en el log: solo local y test")
+        if self.chat_provider == "deepseek" and self.deepseek_api_key is None:
+            raise ValueError("CHAT_PROVIDER=deepseek requiere DEEPSEEK_API_KEY")
+        if self.chat_provider == "fake" and self.app_env in ("staging", "production"):
+            raise ValueError("CHAT_PROVIDER=fake no habla con ningún modelo: solo local y test")
         secret = self.telegram_webhook_secret
         if secret is not None and not re.fullmatch(
             r"[A-Za-z0-9_-]{16,256}", secret.get_secret_value()
