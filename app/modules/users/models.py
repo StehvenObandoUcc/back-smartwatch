@@ -19,4 +19,5 @@ class User(UuidPk, CreatedAt, Base):
     role: Mapped[str] = mapped_column(String(16))
     timezone: Mapped[str] = mapped_column(String(64))
     locale: Mapped[str] = mapped_column(String(8), default="es")
+    email_verified_at: Mapped[datetime | None]
     updated_at: Mapped[datetime] = mapped_column(server_default=func.now(), onupdate=func.now())

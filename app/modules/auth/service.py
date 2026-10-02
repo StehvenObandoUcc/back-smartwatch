@@ -13,6 +13,7 @@ from app.core.security import (
     TokenType,
     utcnow,
 )
+from app.modules.auth.account import AccountService
 from app.modules.auth.schemas import AccessTokenOut, AuthSessionOut, LoginRequest, RegisterRequest
 from app.modules.auth.tokens import RefreshTokens, invalid_refresh
 from app.modules.patients.models import Patient
@@ -52,6 +53,7 @@ class AuthService:
         self._users = UserRepository(session)
         self._patients = PatientRepository(session)
         self._refresh = RefreshTokens(session)
+        self._account = AccountService(session, passwords, settings)
         self._refresh_lifetime = timedelta(days=settings.user_refresh_ttl_days)
 
     async def register(self, data: RegisterRequest) -> WebSession:
@@ -84,6 +86,8 @@ class AuthService:
             # Carrera: otro registro con el mismo correo entre la comprobación y el insert.
             await self._session.rollback()
             raise _email_taken() from None
+        # Mismo commit que el usuario: el correo no se pierde ni se envía sin cuenta.
+        await self._account.send_verification(user)
         return await self._open_session(user)
 
     async def login(self, data: LoginRequest) -> WebSession:

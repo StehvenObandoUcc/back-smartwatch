@@ -20,6 +20,19 @@ class LoginRequest(ApiModel):
     password: str = Field(min_length=1, max_length=128)
 
 
+class TokenBody(ApiModel):
+    token: str = Field(min_length=16, max_length=512)
+
+
+class ForgotPasswordRequest(ApiModel):
+    email: EmailStr = Field(max_length=254)
+
+
+class ResetPasswordRequest(ApiModel):
+    token: str = Field(min_length=16, max_length=512)
+    new_password: str = Field(min_length=10, max_length=128)
+
+
 class AccessTokenOut(ApiModel):
     access_token: str
     token_type: Literal["Bearer"] = "Bearer"  # noqa: S105 (no es un secreto)

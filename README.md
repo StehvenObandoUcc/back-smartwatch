@@ -47,6 +47,7 @@ Recorrido completo del sprint A contra la API real (Windows, Git Bash, desde la 
 
    ```sh
    bash scripts/verify-sprint-a.sh
+   bash scripts/verify-sprint-b.sh   # sprint B, sin claves reales (lee los correos del outbox en Postgres)
    ```
 
 Imprime `OK` o `FALLÓ` por cada paso y termina con código distinto de cero si algo falla (`echo $?`). Cubre: registro de cuidador, paciente gestionado, consentimiento `health_data`, medicamento con horario, vinculación del reloj, plan con ETag y 304, lote de tomas con reenvío (`duplicate`), historial y adherencia. Cada ejecución crea un usuario nuevo; el registro admite 5 por hora desde la misma IP (si da 429: `docker compose exec redis redis-cli FLUSHDB`).

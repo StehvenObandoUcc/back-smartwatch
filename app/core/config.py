@@ -42,6 +42,10 @@ class Settings(BaseSettings):
     user_refresh_ttl_days: int = 30
     device_refresh_idle_days: int = 90
 
+    # Correos de cuenta
+    email_verify_ttl_hours: int = 24
+    password_reset_ttl_minutes: int = 60
+
     # Vinculación del reloj (RFC 8628)
     pairing_code_ttl_seconds: int = 600
     pairing_poll_interval_seconds: int = 5
@@ -62,6 +66,11 @@ class Settings(BaseSettings):
     rate_pairing_confirm_user: RateLimit = RateLimit(limit=10, window_seconds=900)
     rate_pairing_confirm_ip: RateLimit = RateLimit(limit=30, window_seconds=900)
     rate_device_token_ip: RateLimit = RateLimit(limit=120, window_seconds=60)
+    rate_verify_email_ip: RateLimit = RateLimit(limit=20, window_seconds=900)
+    rate_resend_verification_user: RateLimit = RateLimit(limit=3, window_seconds=3600)
+    rate_forgot_password_ip: RateLimit = RateLimit(limit=10, window_seconds=3600)
+    rate_forgot_password_email: RateLimit = RateLimit(limit=3, window_seconds=3600)
+    rate_reset_password_ip: RateLimit = RateLimit(limit=20, window_seconds=900)
 
 
 @lru_cache
