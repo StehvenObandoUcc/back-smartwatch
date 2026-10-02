@@ -2,6 +2,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Cookie, Depends, Request, Response, status
 
+from app.core.auth import CurrentUserDep
 from app.core.deps import (
     AccessTokensDep,
     ClientIpDep,
@@ -11,7 +12,16 @@ from app.core.deps import (
     SettingsDep,
 )
 from app.core.errors import UnauthorizedError, instance_of, problem_from
-from app.modules.auth.schemas import AccessTokenOut, AuthSessionOut, LoginRequest, RegisterRequest
+from app.modules.auth.account import AccountService
+from app.modules.auth.schemas import (
+    AccessTokenOut,
+    AuthSessionOut,
+    ForgotPasswordRequest,
+    LoginRequest,
+    RegisterRequest,
+    ResetPasswordRequest,
+    TokenBody,
+)
 from app.modules.auth.service import AuthService
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -33,6 +43,15 @@ def get_auth_service(
 
 
 AuthServiceDep = Annotated[AuthService, Depends(get_auth_service)]
+
+
+def get_account_service(
+    session: SessionDep, passwords: PasswordsDep, settings: SettingsDep
+) -> AccountService:
+    return AccountService(session, passwords, settings)
+
+
+AccountServiceDep = Annotated[AccountService, Depends(get_account_service)]
 
 
 def _set_refresh_cookie(response: Response, token: str, max_age: int) -> None:
@@ -124,3 +143,80 @@ async def logout(service: AuthServiceDep, refresh_token: RefreshCookie = None) -
     response = Response(status_code=status.HTTP_204_NO_CONTENT)
     _clear_refresh_cookie(response)
     return response
+
+
+@router.post(
+    "/verify-email",
+    operation_id="verifyEmail",
+    summary="Verificar el correo con el token recibido",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def verify_email(
+    data: TokenBody,
+    service: AccountServiceDep,
+    limiter: RateLimiterDep,
+    ip: ClientIpDep,
+    settings: SettingsDep,
+) -> Response:
+    await limiter.hit("verify-email:ip", ip, settings.rate_verify_email_ip)
+    await service.verify_email(data.token)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post(
+    "/resend-verification",
+    operation_id="resendVerification",
+    summary="Reenviar el correo de verificación",
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def resend_verification(
+    user: CurrentUserDep,
+    service: AccountServiceDep,
+    limiter: RateLimiterDep,
+    settings: SettingsDep,
+) -> Response:
+    await limiter.hit(
+        "resend-verification:user", str(user.id), settings.rate_resend_verification_user
+    )
+    queued = await service.resend_verification(user.id)
+    code = status.HTTP_202_ACCEPTED if queued else status.HTTP_204_NO_CONTENT
+    return Response(status_code=code)
+
+
+@router.post(
+    "/forgot-password",
+    operation_id="forgotPassword",
+    summary="Pedir el correo de recuperación de contraseña",
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def forgot_password(
+    data: ForgotPasswordRequest,
+    service: AccountServiceDep,
+    limiter: RateLimiterDep,
+    ip: ClientIpDep,
+    settings: SettingsDep,
+) -> Response:
+    await limiter.hit("forgot-password:ip", ip, settings.rate_forgot_password_ip)
+    await limiter.hit(
+        "forgot-password:email", data.email.lower(), settings.rate_forgot_password_email
+    )
+    await service.forgot_password(data.email)
+    return Response(status_code=status.HTTP_202_ACCEPTED)
+
+
+@router.post(
+    "/reset-password",
+    operation_id="resetPassword",
+    summary="Fijar una contraseña nueva con el token de recuperación",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def reset_password(
+    data: ResetPasswordRequest,
+    service: AccountServiceDep,
+    limiter: RateLimiterDep,
+    ip: ClientIpDep,
+    settings: SettingsDep,
+) -> Response:
+    await limiter.hit("reset-password:ip", ip, settings.rate_reset_password_ip)
+    await service.reset_password(data.token, data.new_password)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
