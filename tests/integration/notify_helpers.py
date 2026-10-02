@@ -20,6 +20,10 @@ _chat_ids = itertools.count(9000, 2)  # el chat de Telegram es único por usuari
 NOW = datetime(2026, 10, 7, 14, 30, tzinfo=UTC)
 # Lunes 2026-10-12 08:00 en Bogotá: llega el reporte de la semana 05-11 de octubre.
 MONDAY_8AM = datetime(2026, 10, 12, 13, 0, tzinfo=UTC)
+# Una semana ya cerrada (21-27 de septiembre) para las pruebas que pasan por la API, que compara
+# `periodEnd` con el reloj real.
+PAST_END = "2026-09-27"
+PAST_NOW = datetime(2026, 9, 28, 13, 0, tzinfo=UTC)
 
 
 @dataclass
@@ -84,7 +88,7 @@ async def make_scenario(
             json={
                 "times": [time],
                 "daysOfWeek": [1, 2, 3, 4, 5, 6, 7],
-                "startDate": "2026-10-01",
+                "startDate": "2026-09-01",
             },
         )
     ).json()
@@ -130,14 +134,14 @@ async def record_event(
             text(
                 "INSERT INTO dose_events (id, event_id, patient_id, schedule_id, medication_id, "
                 "scheduled_at, status, acted_at) VALUES (gen_random_uuid(), :e, :p, :s, :m, "
-                "CAST(:at AS timestamptz), :st, CAST(:at AS timestamptz))"
+                ":at, :st, :at)"
             ),
             {
                 "e": uuid.uuid4(),
                 "p": scenario.patient_id,
                 "s": scenario.schedule_id,
                 "m": scenario.medication_id,
-                "at": scheduled_at,
+                "at": datetime.fromisoformat(scheduled_at),
                 "st": status,
             },
         )
