@@ -42,6 +42,10 @@ bash scripts/telegram-webhook.sh set https://tu-dominio.com   # registra el webh
 bash scripts/telegram-webhook.sh info                         # estado del webhook
 ```
 
+## Chat con IA
+
+`CHAT_PROVIDER=fake` (por defecto en local) responde sin red ni clave, repitiendo la pregunta: sirve para probar el flujo SSE de la web, la respuesta corta del reloj, los consentimientos y el cupo diario (`CHAT_DAILY_MESSAGES`, 30 por defecto). Con el modelo real: `CHAT_PROVIDER=deepseek` y `DEEPSEEK_API_KEY` (solo por variable de entorno; `DEEPSEEK_MODEL` por defecto `deepseek-flash`).
+
 ## Verificar en local
 
 Recorrido completo del sprint A contra la API real (Windows, Git Bash, desde la raíz del repo). Hace falta Docker Desktop abierto y `curl` y `python` en el PATH (vienen con Git Bash y Python). Una sola vez: `cp .env.example .env` y `uv sync`. Los comandos usan `uv run python -m ...` porque en esta máquina Windows el lanzador `uv run alembic` / `uv run uvicorn` falla con `uv trampoline failed to canonicalize script path`.

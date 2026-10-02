@@ -75,4 +75,5 @@ Confirmado por Steve. `docker compose` levanta solo PostgreSQL y Redis para desa
 Plan exprés v3 (`docs/plan-expres.md`) sustituye las fases 2 a 6:
 - Sprint A (fases 2+3): medicamentos, horarios simples (sin RRULE), plan de 7 días versionado con ETag, eventos de toma idempotentes, historial y adherencia. Sin FCM ni worker arq; MISSED se calcula al consultar.
 - Sprint B (fases 4+5): worker arq y outbox, Telegram, correo, reporte semanal, alerta de dosis omitida, verificación de correo y recuperación de contraseña, chat con DeepSeek.
+  Sprint B cerrado en el backend (`x-closed-phase: 3`): correo de cuenta, outbox y worker, Telegram, alertas y reportes, chat con DeepSeek. Pendiente de claves reales: Resend, bot de Telegram (`scripts/telegram-webhook.sh`) y DeepSeek.
 - Cierre: FCM, Schemathesis, OpenTelemetry, cobertura 85 %, k6, ASVS, backups y despliegue.
