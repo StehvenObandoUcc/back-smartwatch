@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: API de recordatorios de medicamentos
-  version: 0.3.0
+  version: 0.4.0
   x-closed-phase: 2
   description: |
     Contrato de la API. Fuente de verdad del backend y de los clientes generados por el frontend
@@ -53,6 +53,11 @@ info:
     - 2 Sprint A (plan exprés, fases 2 y 3 juntas): medicamentos, horarios simples (horas del día,
       días de la semana, fechas de inicio y fin; sin RRULE), plan de 7 días versionado, eventos
       de toma idempotentes, historial y adherencia. `MISSED` se calcula al consultar.
+    - 3 Sprint B (plan exprés, fases 4 y 5 juntas): verificación de correo y recuperación de
+      contraseña, canales y preferencias de notificación (Telegram y correo), reportes semanales
+      en PDF y chat con IA (SSE para la web, respuesta corta para el reloj). El envío de avisos
+      (alerta de dosis omitida, reporte semanal) lo hace un worker en segundo plano: no hay
+      endpoint para dispararlos.
 servers:
   - url: http://localhost:8000
     description: Desarrollo local
@@ -75,6 +80,12 @@ tags:
     description: Plan de 7 días de un paciente
   - name: doses
     description: Eventos de toma, historial y adherencia
+  - name: notifications
+    description: Canales (Telegram, correo) y preferencias de notificación
+  - name: reports
+    description: Reportes semanales de adherencia
+  - name: chat
+    description: Asistente de IA sobre el plan del paciente
 
 paths:
   # ─── Fase 0 ──────────────────────────────────────────────────────────────────
@@ -1220,6 +1231,450 @@ paths:
         "422":
           $ref: "#/components/responses/ValidationError"
 
+  # ─── Sprint B (x-phase 3): cuenta por correo, notificaciones, reportes y chat ────
+  /auth/verify-email:
+    post:
+      tags: [auth]
+      operationId: verifyEmail
+      x-phase: 3
+      summary: Verificar el correo con el token recibido
+      description: |
+        El token llega por correo en un enlace al panel (`{WEB_ORIGIN}/verify-email?token=...`),
+        es de un solo uso y caduca a las 24 horas. Token inválido, caducado o ya usado: 400
+        (`code: invalid_token`). Verificar un correo ya verificado con un token válido devuelve 204.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TokenBody"
+      responses:
+        "204":
+          description: Correo verificado.
+        "400":
+          $ref: "#/components/responses/InvalidToken"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+  /auth/resend-verification:
+    post:
+      tags: [auth]
+      operationId: resendVerification
+      x-phase: 3
+      summary: Reenviar el correo de verificación
+      description: |
+        Solo con sesión de usuario. Invalida el token anterior. Si el correo ya está verificado
+        devuelve 204 sin enviar nada. Límite de peticiones por usuario (429).
+      responses:
+        "202":
+          description: Correo encolado para envío.
+        "204":
+          description: El correo ya estaba verificado.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+  /auth/forgot-password:
+    post:
+      tags: [auth]
+      operationId: forgotPassword
+      x-phase: 3
+      summary: Pedir el correo de recuperación de contraseña
+      description: |
+        Responde siempre 202, exista o no el correo, para no revelar qué cuentas existen. Si existe
+        y está verificado, se envía un enlace al panel (`{WEB_ORIGIN}/reset-password?token=...`) con
+        un token de un solo uso que caduca a la hora. Límite de peticiones por IP y por correo (429).
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ForgotPasswordRequest"
+      responses:
+        "202":
+          description: Si la cuenta existe, recibirá un correo.
+        "422":
+          $ref: "#/components/responses/ValidationError"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+  /auth/reset-password:
+    post:
+      tags: [auth]
+      operationId: resetPassword
+      x-phase: 3
+      summary: Fijar una contraseña nueva con el token de recuperación
+      description: |
+        Token inválido, caducado o ya usado: 400 (`code: invalid_token`). Al cambiar la contraseña
+        se revocan todos los refresh tokens del usuario (web); los relojes vinculados no se tocan.
+        No abre sesión: la web lleva al usuario a iniciarla.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ResetPasswordRequest"
+      responses:
+        "204":
+          description: Contraseña cambiada.
+        "400":
+          $ref: "#/components/responses/InvalidToken"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+  /users/me/notification-channels:
+    get:
+      tags: [notifications]
+      operationId: listMyNotificationChannels
+      x-phase: 3
+      summary: Canales de notificación del usuario
+      description: |
+        Siempre devuelve los dos canales. `email` es el correo de la cuenta (`linked` siempre
+        true; `verified` indica si se verificó). `telegram` está vinculado cuando el usuario
+        abrió el enlace de `POST /users/me/notification-channels/telegram/link`.
+      responses:
+        "200":
+          description: Canales.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NotificationChannelList"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /users/me/notification-channels/telegram/link:
+    post:
+      tags: [notifications]
+      operationId: createTelegramLink
+      x-phase: 3
+      summary: Pedir el enlace para vincular Telegram
+      description: |
+        Devuelve `https://t.me/<Bot>?start=<token>`. El token es de un solo uso y caduca a los 15
+        minutos; pedir otro invalida el anterior. Al abrir el enlace y pulsar "Iniciar", el bot
+        recibe el token por el webhook y vincula el chat con el usuario; el bot solo puede escribir
+        a quien lo inició. La web consulta `GET /users/me/notification-channels` hasta ver
+        `telegram.linked: true`. Límite de peticiones por usuario (429).
+      responses:
+        "201":
+          description: Enlace creado.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TelegramLink"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+  /users/me/notification-channels/telegram:
+    delete:
+      tags: [notifications]
+      operationId: unlinkTelegram
+      x-phase: 3
+      summary: Desvincular Telegram
+      description: "Idempotente: si no estaba vinculado devuelve 204."
+      responses:
+        "204":
+          description: Telegram desvinculado.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /users/me/notification-preferences:
+    get:
+      tags: [notifications]
+      operationId: getMyNotificationPreferences
+      x-phase: 3
+      summary: Preferencias de notificación
+      description: |
+        Qué avisos llegan por qué canal. Por defecto todo activado; un aviso solo se envía si el
+        canal está vinculado (y el correo verificado) y el usuario concedió el consentimiento
+        `notifications` (el del paciente, si el usuario es un paciente con cuenta).
+      responses:
+        "200":
+          description: Preferencias.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NotificationPreferences"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    put:
+      tags: [notifications]
+      operationId: setMyNotificationPreferences
+      x-phase: 3
+      summary: Guardar las preferencias de notificación
+      description: Reemplazo completo e idempotente.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/NotificationPreferences"
+      responses:
+        "200":
+          description: Preferencias guardadas.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NotificationPreferences"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+  /telegram/webhook:
+    post:
+      tags: [notifications]
+      operationId: telegramWebhook
+      x-phase: 3
+      x-internal: true
+      summary: Webhook del bot de Telegram (no lo usan la web ni el reloj)
+      description: |
+        Lo llama Telegram con cada actualización. Se autentica con la cabecera
+        `X-Telegram-Bot-Api-Secret-Token` (el `secret_token` fijado al registrar el webhook); si
+        no coincide, 401. Con `/start <token>` vincula el chat al usuario dueño del token (un token
+        inválido o caducado se responde por chat, no con un error HTTP); `/stop` desvincula.
+        Cualquier otra actualización se ignora. Responde 200 salvo secreto incorrecto.
+      security: []
+      parameters:
+        - name: X-Telegram-Bot-Api-Secret-Token
+          in: header
+          required: true
+          schema:
+            type: string
+            maxLength: 256
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        "200":
+          description: Actualización recibida.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /patients/{patientId}/reports:
+    parameters:
+      - $ref: "#/components/parameters/PatientIdPath"
+    get:
+      tags: [reports]
+      operationId: listReports
+      x-phase: 3
+      summary: Reportes semanales de un paciente
+      description: |
+        Del más reciente al más antiguo. Hay un reporte automático por semana (lunes a domingo)
+        que se genera el lunes a las 08:00 en la zona horaria del paciente; también pueden
+        pedirse a mano. Requiere vínculo con el paciente (404 si no) y consentimiento
+        `health_data` (403 `consent_required`).
+      parameters:
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: Página de reportes.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReportPage"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+    post:
+      tags: [reports]
+      operationId: createReport
+      x-phase: 3
+      summary: Pedir un reporte a mano
+      description: |
+        Genera el reporte de los 7 días que terminan en `periodEnd` (por defecto ayer, en la zona
+        del paciente; no puede ser futuro). La generación es asíncrona: responde 202 con
+        `status: pending` y la web consulta `GET /patients/{patientId}/reports/{reportId}` hasta
+        `ready` o `failed`. Pedir el mismo `periodEnd` otra vez devuelve el reporte existente.
+        Límite de peticiones por paciente (429).
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReportCreate"
+      responses:
+        "202":
+          description: Reporte en generación (o el ya existente para ese periodo).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Report"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+  /patients/{patientId}/reports/{reportId}:
+    parameters:
+      - $ref: "#/components/parameters/PatientIdPath"
+      - $ref: "#/components/parameters/ReportIdPath"
+    get:
+      tags: [reports]
+      operationId: getReport
+      x-phase: 3
+      summary: Un reporte
+      description: "Con `status: ready` incluye el resumen; el PDF está en `.../pdf`."
+      responses:
+        "200":
+          description: Reporte.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Report"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /patients/{patientId}/reports/{reportId}/pdf:
+    parameters:
+      - $ref: "#/components/parameters/PatientIdPath"
+      - $ref: "#/components/parameters/ReportIdPath"
+    get:
+      tags: [reports]
+      operationId: downloadReportPdf
+      x-phase: 3
+      summary: Descargar el reporte en PDF
+      description: |
+        Con sesión de usuario (cabecera `Authorization`), no por enlace público: la web lo pide con
+        `fetch` y lo descarga como blob. Reporte aún en generación o fallido: 409
+        (`code: report_not_ready`).
+      responses:
+        "200":
+          description: Documento PDF.
+          content:
+            application/pdf:
+              schema:
+                type: string
+                format: binary
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+  /patients/{patientId}/chat/messages:
+    parameters:
+      - $ref: "#/components/parameters/PatientIdPath"
+    post:
+      tags: [chat]
+      operationId: sendChatMessage
+      x-phase: 3
+      summary: Preguntar al asistente sobre el plan de un paciente (web, SSE)
+      description: |
+        La respuesta llega como flujo `text/event-stream` (SSE) con tres tipos de evento:
+        - `event: delta` con `data: {"text": "..."}` (trozos de la respuesta, en orden).
+        - `event: done` con `data: {"remainingMessages": 27}` al terminar.
+        - `event: error` con `data: {"code": "chat_unavailable"}` si el proveedor falla a medias.
+        Los errores previos al flujo (sin acceso, sin consentimiento, límite) son problem+json
+        normales con su código HTTP. Requiere vínculo con el paciente (404 si no) y consentimiento
+        `ai_chat` del paciente (403 `consent_required`).
+
+        El asistente conoce el plan del paciente (medicamentos, dosis y horarios) sin nombre,
+        documento ni datos de contacto. No cambia dosis ni diagnostica. Sin estado en el servidor:
+        el cliente envía en `history` los últimos turnos (máximo 10) y el servidor **no guarda el
+        texto de la conversación**, solo el recuento de mensajes y tokens. Límite diario de
+        mensajes por usuario: al superarlo, 429 con `code: chat_limit_reached` y `Retry-After`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ChatRequest"
+      responses:
+        "200":
+          description: Flujo SSE con la respuesta.
+          content:
+            text/event-stream:
+              schema:
+                type: string
+              example: |
+                event: delta
+                data: {"text": "Esta noche te toca "}
+
+                event: delta
+                data: {"text": "la metformina a las 20:00."}
+
+                event: done
+                data: {"remainingMessages": 27}
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+  /devices/me/chat/messages:
+    post:
+      tags: [chat]
+      operationId: sendMyChatMessage
+      x-phase: 3
+      summary: Preguntar al asistente desde el reloj (respuesta corta)
+      description: |
+        Solo con token de reloj (403 con token de usuario). Mismas reglas, guardarraíles y
+        consentimiento (`ai_chat` del paciente) que el chat web, pero responde JSON sin streaming y
+        con una respuesta corta (como máximo 3 frases, sin listas ni formato) para leerla en voz
+        alta. El límite diario cuenta por reloj.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ChatRequest"
+      responses:
+        "200":
+          description: Respuesta corta.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WatchChatReply"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+
 components:
   securitySchemes:
     bearerAuth:
@@ -1295,6 +1750,14 @@ components:
         type: string
         format: date
 
+    ReportIdPath:
+      name: reportId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+
   headers:
     SetRefreshCookie:
       description: |
@@ -1352,6 +1815,21 @@ components:
           description: Segundos hasta poder reintentar.
           schema:
             type: integer
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+
+    InvalidToken:
+      description: "Token de un solo uso inválido, caducado o ya usado (`code: invalid_token`)."
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    ServiceUnavailable:
+      description: |
+        El proveedor externo (modelo de IA) no responde (`code: chat_unavailable`). Se puede
+        reintentar; no consume el límite diario.
       content:
         application/problem+json:
           schema:
@@ -1547,6 +2025,9 @@ components:
             - type: string
               format: uuid
             - type: "null"
+        emailVerified:
+          type: boolean
+          description: Presente desde el sprint B (si falta, tratar como false).
         createdAt:
           type: string
           format: date-time
@@ -2180,3 +2661,245 @@ components:
               minimum: 0
               maximum: 100
             - type: "null"
+
+    # ─── Sprint B: cuenta por correo, notificaciones, reportes, chat ──────────────
+    TokenBody:
+      type: object
+      required: [token]
+      properties:
+        token:
+          type: string
+          minLength: 16
+          maxLength: 512
+    ForgotPasswordRequest:
+      type: object
+      required: [email]
+      properties:
+        email:
+          type: string
+          format: email
+          maxLength: 254
+    ResetPasswordRequest:
+      type: object
+      required: [token, newPassword]
+      properties:
+        token:
+          type: string
+          minLength: 16
+          maxLength: 512
+        newPassword:
+          type: string
+          format: password
+          minLength: 10
+          maxLength: 128
+    NotificationChannelType:
+      type: string
+      enum: [email, telegram]
+    NotificationChannel:
+      type: object
+      required: [channel, linked, verified, label, linkedAt]
+      properties:
+        channel:
+          $ref: "#/components/schemas/NotificationChannelType"
+        linked:
+          type: boolean
+        verified:
+          type: boolean
+          description: Correo verificado; en Telegram es igual a `linked`.
+        label:
+          description: Correo enmascarado (`a***@example.com`) o usuario de Telegram; null si no está vinculado.
+          oneOf:
+            - type: string
+            - type: "null"
+        linkedAt:
+          oneOf:
+            - type: string
+              format: date-time
+            - type: "null"
+    NotificationChannelList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/NotificationChannel"
+    TelegramLink:
+      type: object
+      required: [url, expiresAt]
+      properties:
+        url:
+          type: string
+          format: uri
+          description: "`https://t.me/<Bot>?start=<token>`; la web lo abre o lo muestra como botón y código QR."
+        expiresAt:
+          type: string
+          format: date-time
+    ChannelToggles:
+      type: object
+      required: [email, telegram]
+      properties:
+        email:
+          type: boolean
+        telegram:
+          type: boolean
+    NotificationPreferences:
+      type: object
+      required: [missedDose, weeklyReport]
+      properties:
+        missedDose:
+          allOf:
+            - $ref: "#/components/schemas/ChannelToggles"
+          description: |
+            Alerta de dosis omitida (una por dosis, cuando pasan 60 minutos sin evento). La reciben
+            los cuidadores con vínculo activo del paciente.
+        weeklyReport:
+          allOf:
+            - $ref: "#/components/schemas/ChannelToggles"
+          description: |
+            Aviso del reporte semanal, con resumen mínimo y enlace al reporte en el panel. Lo
+            reciben los cuidadores y el propio paciente si tiene cuenta.
+    ReportStatus:
+      type: string
+      enum: [pending, ready, failed]
+    ReportTrigger:
+      type: string
+      enum: [weekly, manual]
+    MedicationAdherence:
+      type: object
+      required: [medicationId, medicationName, taken, skipped, missed, percentage]
+      properties:
+        medicationId:
+          type: string
+          format: uuid
+        medicationName:
+          type: string
+        taken:
+          type: integer
+          minimum: 0
+        skipped:
+          type: integer
+          minimum: 0
+        missed:
+          type: integer
+          minimum: 0
+        percentage:
+          oneOf:
+            - type: number
+              minimum: 0
+              maximum: 100
+            - type: "null"
+    ReportSummary:
+      type: object
+      required: [taken, skipped, missed, percentage, byMedication]
+      description: Mismas reglas que `GET /patients/{patientId}/adherence` sobre el periodo del reporte.
+      properties:
+        taken:
+          type: integer
+          minimum: 0
+        skipped:
+          type: integer
+          minimum: 0
+        missed:
+          type: integer
+          minimum: 0
+        percentage:
+          oneOf:
+            - type: number
+              minimum: 0
+              maximum: 100
+            - type: "null"
+        byMedication:
+          type: array
+          items:
+            $ref: "#/components/schemas/MedicationAdherence"
+    Report:
+      type: object
+      required: [id, patientId, periodStart, periodEnd, trigger, status, createdAt, generatedAt, summary]
+      properties:
+        id:
+          type: string
+          format: uuid
+        patientId:
+          type: string
+          format: uuid
+        periodStart:
+          type: string
+          format: date
+        periodEnd:
+          type: string
+          format: date
+          description: Inclusive; el periodo son 7 días.
+        trigger:
+          $ref: "#/components/schemas/ReportTrigger"
+        status:
+          $ref: "#/components/schemas/ReportStatus"
+        createdAt:
+          type: string
+          format: date-time
+        generatedAt:
+          oneOf:
+            - type: string
+              format: date-time
+            - type: "null"
+        summary:
+          description: "Solo con `status: ready`."
+          oneOf:
+            - $ref: "#/components/schemas/ReportSummary"
+            - type: "null"
+    ReportCreate:
+      type: object
+      properties:
+        periodEnd:
+          type: string
+          format: date
+          description: Último día del periodo (fecha local del paciente); por defecto ayer.
+    ReportPage:
+      type: object
+      required: [items, nextCursor]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Report"
+        nextCursor:
+          oneOf:
+            - type: string
+            - type: "null"
+    ChatRole:
+      type: string
+      enum: [user, assistant]
+    ChatTurn:
+      type: object
+      required: [role, content]
+      properties:
+        role:
+          $ref: "#/components/schemas/ChatRole"
+        content:
+          type: string
+          minLength: 1
+          maxLength: 1000
+    ChatRequest:
+      type: object
+      required: [message]
+      properties:
+        message:
+          type: string
+          minLength: 1
+          maxLength: 500
+        history:
+          type: array
+          description: Turnos anteriores, del más antiguo al más reciente.
+          maxItems: 10
+          items:
+            $ref: "#/components/schemas/ChatTurn"
+    WatchChatReply:
+      type: object
+      required: [reply, remainingMessages]
+      properties:
+        reply:
+          type: string
+          description: Texto plano de hasta 3 frases, listo para leerse en voz alta.
+        remainingMessages:
+          type: integer
+          minimum: 0
