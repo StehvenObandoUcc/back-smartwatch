@@ -31,6 +31,15 @@ PYTHONUTF8=1 uv run python -m arq app.worker.main.WorkerSettings   # otra termin
 
 (`PYTHONUTF8=1` evita errores de codificación al registrar flechas de arq en la consola de Windows.)
 
+## Telegram
+
+Con `TELEGRAM_BOT_USERNAME` y `TELEGRAM_WEBHOOK_SECRET` (valores de desarrollo en `.env.example`) ya funcionan los endpoints de vinculación y el webhook; el script de verificación hace de Telegram. Para un bot real hacen falta `TELEGRAM_BOT_TOKEN` (de @BotFather, solo por variable de entorno) y una URL HTTPS pública:
+
+```sh
+bash scripts/telegram-webhook.sh set https://tu-dominio.com   # registra el webhook con el secret_token
+bash scripts/telegram-webhook.sh info                         # estado del webhook
+```
+
 ## Verificar en local
 
 Recorrido completo del sprint A contra la API real (Windows, Git Bash, desde la raíz del repo). Hace falta Docker Desktop abierto y `curl` y `python` en el PATH (vienen con Git Bash y Python). Una sola vez: `cp .env.example .env` y `uv sync`. Los comandos usan `uv run python -m ...` porque en esta máquina Windows el lanzador `uv run alembic` / `uv run uvicorn` falla con `uv trampoline failed to canonicalize script path`.

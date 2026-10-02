@@ -1,7 +1,17 @@
+import uuid
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import CheckConstraint, Index, String, UniqueConstraint, func, text
+from sqlalchemy import (
+    BigInteger,
+    CheckConstraint,
+    ForeignKey,
+    Index,
+    String,
+    UniqueConstraint,
+    func,
+    text,
+)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -37,3 +47,29 @@ class OutboxMessage(UuidPk, CreatedAt, Base):
     next_attempt_at: Mapped[datetime] = mapped_column(server_default=func.now())
     last_error: Mapped[str | None] = mapped_column(String(500))
     sent_at: Mapped[datetime | None]
+
+
+class TelegramLink(UuidPk, CreatedAt, Base):
+    """Chat privado de Telegram vinculado a un usuario. Un chat pertenece a un solo usuario."""
+
+    __tablename__ = "telegram_links"
+
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), unique=True
+    )
+    chat_id: Mapped[int] = mapped_column(BigInteger, unique=True)
+    username: Mapped[str | None] = mapped_column(String(64))
+
+
+class NotificationPreference(Base):
+    """Qué avisos llegan por qué canal. Sin fila = todo activado."""
+
+    __tablename__ = "notification_preferences"
+
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
+    missed_dose_email: Mapped[bool] = mapped_column(server_default="true")
+    missed_dose_telegram: Mapped[bool] = mapped_column(server_default="true")
+    weekly_report_email: Mapped[bool] = mapped_column(server_default="true")
+    weekly_report_telegram: Mapped[bool] = mapped_column(server_default="true")
