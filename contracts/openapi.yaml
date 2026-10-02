@@ -144,8 +144,8 @@ paths:
         su registro en `/patients` (`managed: false`, con el `displayName` y `timezone` del
         registro) y `user.patientId` apunta a él. Si `role` es `caregiver`, `user.patientId` es
         null. Devuelve el token de acceso en el JSON y el refresh token en la cookie
-        `__Secure-refresh-token`. Límite de peticiones por IP (429). Sin verificación de correo
-        hasta la fase 4.
+        `__Secure-refresh-token`. Límite de peticiones por IP (429). Encola un correo de
+        verificación (`POST /auth/verify-email`); no hace falta verificarlo para usar la cuenta.
       security: []
       requestBody:
         required: true
@@ -2003,7 +2003,7 @@ components:
     # ─── Usuario ───────────────────────────────────────────────────────────────
     User:
       type: object
-      required: [id, email, displayName, role, timezone, locale, patientId, createdAt]
+      required: [id, email, emailVerified, displayName, role, timezone, locale, patientId, createdAt]
       properties:
         id:
           type: string
@@ -2027,7 +2027,7 @@ components:
             - type: "null"
         emailVerified:
           type: boolean
-          description: Presente desde el sprint B (si falta, tratar como false).
+          description: El correo se verificó con el enlace que llega al registrarse.
         createdAt:
           type: string
           format: date-time

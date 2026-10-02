@@ -10,6 +10,7 @@ import app.modules.consents.models
 import app.modules.devices.models
 import app.modules.doses.models
 import app.modules.medications.models
+import app.modules.notifications.models
 import app.modules.patients.models
 import app.modules.users.models  # noqa: F401
 from app.core.config import get_settings

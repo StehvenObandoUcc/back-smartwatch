@@ -1,10 +1,29 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import CheckConstraint, ForeignKey, String
+from sqlalchemy import CheckConstraint, ForeignKey, Index, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db import Base, CreatedAt, UuidPk
+
+
+class AccountToken(UuidPk, CreatedAt, Base):
+    """Token de un solo uso enviado por correo (verificar el correo o recuperar la contraseña).
+
+    Solo se guarda su SHA-256. Pedir uno nuevo invalida los anteriores del mismo propósito.
+    """
+
+    __tablename__ = "account_tokens"
+    __table_args__ = (
+        CheckConstraint("purpose IN ('verify_email', 'reset_password')", name="purpose"),
+        Index("ix_account_tokens_user_purpose", "user_id", "purpose"),
+    )
+
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    purpose: Mapped[str] = mapped_column(String(16))
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True)
+    expires_at: Mapped[datetime]
+    used_at: Mapped[datetime | None]
 
 
 class RefreshToken(UuidPk, CreatedAt, Base):
