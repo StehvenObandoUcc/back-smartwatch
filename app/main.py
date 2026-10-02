@@ -12,6 +12,8 @@ from app.core.logging import configure_logging
 from app.core.middleware import RequestContextMiddleware
 from app.core.security import AccessTokenService, PasswordService
 from app.modules.auth.router import router as auth_router
+from app.modules.chat.provider import build_provider
+from app.modules.chat.router import router as chat_router
 from app.modules.devices.router import device_active_check
 from app.modules.devices.router import router as devices_router
 from app.modules.doses.router import router as doses_router
@@ -38,6 +40,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             yield
         finally:
             await app.state.redis.aclose()
+            await app.state.chat_provider.aclose()
             await app.state.engine.dispose()
 
     # La documentación interactiva solo en local: el contrato publicado es contracts/openapi.yaml.
@@ -54,6 +57,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.passwords = PasswordService(settings)
     app.state.access_tokens = AccessTokenService(settings)
     app.state.device_active_check = device_active_check
+    app.state.chat_provider = build_provider(settings)
 
     app.add_middleware(
         CORSMiddleware,
@@ -77,4 +81,5 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(doses_router)
     app.include_router(notifications_router)
     app.include_router(reports_router)
+    app.include_router(chat_router)
     return app
