@@ -31,6 +31,7 @@ class Settings(BaseSettings):
     db_max_overflow: int = 10
     dependency_timeout_seconds: float = 2.0
 
+    # Base de los `type` de los errores RFC 9457; en staging/producción debe ser la real.
     problem_type_base: str = "https://api.example.com/problems/"
 
     # Origen del panel web: único origen con CORS y credenciales (cookie de refresh).
@@ -118,6 +119,8 @@ class Settings(BaseSettings):
             raise ValueError("CHAT_PROVIDER=deepseek requiere DEEPSEEK_API_KEY")
         if self.chat_provider == "fake" and self.app_env in ("staging", "production"):
             raise ValueError("CHAT_PROVIDER=fake no habla con ningún modelo: solo local y test")
+        if self.app_env in ("staging", "production") and "example.com" in self.problem_type_base:
+            raise ValueError("PROBLEM_TYPE_BASE: define la URL real de la API")
         secret = self.telegram_webhook_secret
         if secret is not None and not re.fullmatch(
             r"[A-Za-z0-9_-]{16,256}", secret.get_secret_value()
