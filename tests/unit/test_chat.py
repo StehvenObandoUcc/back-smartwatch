@@ -202,3 +202,14 @@ def test_deepseek_requires_its_key() -> None:
 def test_fake_chat_provider_is_refused_outside_local_and_test(env: str) -> None:
     with pytest.raises(ValidationError, match="solo local y test"):
         _settings(app_env=env, email_provider="resend", resend_api_key="re_x", chat_provider="fake")
+
+
+def test_placeholder_problem_type_base_is_refused_in_production() -> None:
+    with pytest.raises(ValidationError, match="PROBLEM_TYPE_BASE"):
+        _settings(
+            app_env="production",
+            email_provider="resend",
+            resend_api_key="re_x",
+            chat_provider="deepseek",
+            deepseek_api_key="sk-x",
+        )
