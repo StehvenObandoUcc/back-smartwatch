@@ -71,6 +71,14 @@ Prueba: registra una cuenta nueva (con el worker corriendo): en menos de 15 s ll
 
 Con cada una lista: avisa y se prueba de punta a punta (el worker debe estar corriendo para correo y Telegram).
 
+## Arranque completo (checklist E2E)
+
+1. `docker compose up -d` y `uv run alembic upgrade head`.
+2. API: `uv run python -m uvicorn app.main:create_app --factory --host 0.0.0.0`.
+3. **Worker** (sin él no salen correos, alertas ni reportes): `PYTHONUTF8=1 uv run python -m arq app.worker.main.WorkerSettings`.
+4. `GET /health` responde 200. Registra una cuenta y comprueba que llega el correo.
+5. Al terminar: `docker compose stop`.
+
 ## Probar con el emulador del reloj o un teléfono
 
 `uvicorn` escucha por defecto solo en `127.0.0.1`. Para que el emulador (`http://10.0.2.2:8000`) o un dispositivo real de la misma red alcancen la API:
