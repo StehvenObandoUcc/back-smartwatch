@@ -33,3 +33,7 @@ def test_closed_phases_are_fully_implemented() -> None:
     pending = required - app_operations(create_app())
 
     assert not pending, f"Fase {closed_phase} cerrada con rutas sin implementar: {sorted(pending)}"
+
+
+def test_api_version_matches_contract() -> None:
+    assert create_app().version == load_contract()["info"]["version"]
