@@ -19,7 +19,7 @@ os.environ.setdefault("ARGON2_TIME_COST", "1")
 os.environ.setdefault("ARGON2_MEMORY_COST_KIB", "1024")
 os.environ.setdefault("ARGON2_PARALLELISM", "1")
 
-from app.core.config import get_settings
+from app.core.config import Settings, get_settings
 
 ROOT = Path(__file__).resolve().parents[1]
 CONTRACT_PATH = ROOT / "contracts" / "openapi.yaml"
@@ -62,8 +62,21 @@ def app_operations(app: FastAPI) -> set[Operation]:
     return _operations(app.openapi())
 
 
+_OPTIONAL_KEYS = (
+    "DEEPSEEK_API_KEY",
+    "RESEND_API_KEY",
+    "TELEGRAM_BOT_TOKEN",
+    "TELEGRAM_WEBHOOK_SECRET",
+    "TELEGRAM_BOT_USERNAME",
+)
+
+
 @pytest.fixture(autouse=True)
-def _clear_settings_cache() -> Iterator[None]:
+def _isolate_settings(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """Las pruebas no leen el `.env` real ni claves del entorno: solo lo que fijan ellas."""
+    monkeypatch.setitem(Settings.model_config, "env_file", None)
+    for key in _OPTIONAL_KEYS:
+        monkeypatch.delenv(key, raising=False)
     get_settings.cache_clear()
     yield
     get_settings.cache_clear()
