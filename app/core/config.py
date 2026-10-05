@@ -73,8 +73,11 @@ class Settings(BaseSettings):
     deepseek_model: str = "deepseek-flash"
     chat_daily_messages: int = 30
     chat_timeout_seconds: float = 20.0
-    chat_web_max_tokens: int = 500
-    chat_watch_max_tokens: int = 150
+    # deepseek-flash razona antes de responder y ese razonamiento cuenta como tokens: con un tope
+    # bajo (150) se agota pensando y la respuesta llega vacía. La respuesta corta del reloj se
+    # logra con el prompt y `shorten_for_watch`, no con el tope.
+    chat_web_max_tokens: int = 1500
+    chat_watch_max_tokens: int = 700
 
     # Avisos y reportes
     missed_alert_lookback_hours: int = 6
