@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: API de recordatorios de medicamentos
-  version: 0.6.0
+  version: 0.7.0
   x-closed-phase: 3
   description: |
     Contrato de la API. Fuente de verdad del backend y de los clientes generados por el frontend
@@ -2812,13 +2812,20 @@ components:
       enum: [weekly, manual]
     MedicationAdherence:
       type: object
-      required: [medicationId, medicationName, taken, skipped, missed, percentage]
+      required: [medicationId, medicationName, dosage, scheduled, taken, skipped, missed, percentage]
       properties:
         medicationId:
           type: string
           format: uuid
         medicationName:
           type: string
+        dosage:
+          type: string
+          description: Dosis vigente del medicamento al final del periodo (por ejemplo "850 mg").
+        scheduled:
+          type: integer
+          minimum: 0
+          description: Dosis programadas del periodo (`taken + skipped + missed`).
         taken:
           type: integer
           minimum: 0
@@ -2836,7 +2843,7 @@ components:
             - type: "null"
     ReportSummary:
       type: object
-      required: [taken, skipped, missed, percentage, byMedication]
+      required: [taken, skipped, missed, percentage, byMedication, byDay]
       description: Mismas reglas que `GET /patients/{patientId}/adherence` sobre el periodo del reporte.
       properties:
         taken:
@@ -2858,6 +2865,28 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/MedicationAdherence"
+        byDay:
+          type: array
+          description: Un elemento por cada día del periodo (7), en orden, aunque no haya dosis.
+          items:
+            $ref: "#/components/schemas/DayAdherence"
+    DayAdherence:
+      type: object
+      required: [date, taken, skipped, missed]
+      properties:
+        date:
+          type: string
+          format: date
+          description: Fecha local del paciente.
+        taken:
+          type: integer
+          minimum: 0
+        skipped:
+          type: integer
+          minimum: 0
+        missed:
+          type: integer
+          minimum: 0
     Report:
       type: object
       required: [id, patientId, periodStart, periodEnd, trigger, status, createdAt, generatedAt, summary]
