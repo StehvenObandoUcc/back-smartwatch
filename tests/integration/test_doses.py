@@ -189,6 +189,91 @@ async def test_dose_events_validate_the_body(client: AsyncClient, mutate: Any) -
     assert_problem(response, 422, "validation_error")
 
 
+# ─── Tomas marcadas desde la web ──────────────────────────────────────────────
+
+
+async def _web_send(
+    client: AsyncClient, user: Any, patient_id: str, *events: dict[str, Any]
+) -> Any:
+    return await client.post(
+        f"/patients/{patient_id}/dose-events", headers=bearer(user), json={"events": list(events)}
+    )
+
+
+async def test_web_dose_events_are_idempotent_and_share_the_dose_with_the_watch(
+    client: AsyncClient,
+) -> None:
+    owner, patient_id, watch, _, doses = await _setup(client)
+    event = _event(doses[0])
+
+    first = await _web_send(client, owner, patient_id, event)
+    again = await _web_send(client, owner, patient_id, event)
+    from_watch = await _send(client, watch, _event(doses[0], status="SKIPPED"))
+
+    assert first.status_code == 200
+    assert first.json()["results"][0]["outcome"] == "created"
+    assert again.json()["results"][0]["outcome"] == "duplicate"
+    assert (
+        from_watch.json()["results"][0]["code"] == "dose_already_recorded"
+    )  # una dosis, un evento
+    history = (
+        await client.get(f"/patients/{patient_id}/dose-history", headers=bearer(owner))
+    ).json()
+    assert [i["status"] for i in history["items"]] == ["TAKEN"]
+
+
+async def test_web_dose_events_reject_a_dose_the_schedule_never_generated(
+    client: AsyncClient,
+) -> None:
+    owner, patient_id, _, _, doses = await _setup(client)
+    off_schedule = _event(doses[0], scheduledAt="2026-01-01T03:17:00Z")
+
+    response = await _web_send(client, owner, patient_id, off_schedule)
+
+    assert response.json()["results"][0] == {
+        "eventId": off_schedule["eventId"],
+        "outcome": "rejected",
+        "code": "invalid_scheduled_at",
+    }
+
+
+async def test_web_dose_events_authorization(client: AsyncClient) -> None:
+    owner, patient_id, watch, _, doses = await _setup(client)
+    url = f"/patients/{patient_id}/dose-events"
+    stranger = await register(client, role="caregiver")
+    caregiver = await register(client, role="caregiver")
+    code = (
+        await client.post(f"/patients/{patient_id}/caregiver-invitations", headers=bearer(owner))
+    ).json()["code"]
+    await client.post(f"/caregiver-invitations/{code}/accept", headers=bearer(caregiver))
+
+    assert_problem(
+        await client.post(url, json={"events": [_event(doses[0])]}), 401, "missing_token"
+    )
+    assert_problem(
+        await _web_send(client, stranger, patient_id, _event(doses[0])), 404, "patient_not_found"
+    )
+    assert_problem(
+        await client.post(url, headers=watch, json={"events": [_event(doses[0])]}),
+        403,
+        "wrong_token_type",
+    )
+    assert (await _web_send(client, caregiver, patient_id, _event(doses[0]))).status_code == 200
+
+
+async def test_web_dose_events_require_health_consent(client: AsyncClient) -> None:
+    owner, patient_id, _, _, doses = await _setup(client)
+    await client.put(
+        "/users/me/consents/health_data",
+        headers=bearer(owner),
+        json={"granted": False, "version": "v1"},
+    )
+
+    assert_problem(
+        await _web_send(client, owner, patient_id, _event(doses[0])), 403, "consent_required"
+    )
+
+
 # ─── Autorización (web) ───────────────────────────────────────────────────────
 
 _WEB_ROUTES = ["/patients/{p}/dose-history", "/patients/{p}/adherence"]

@@ -1,4 +1,4 @@
-"""Eventos de toma (reloj), historial y adherencia (web).
+"""Eventos de toma (reloj y web), historial y adherencia (web).
 
 Todo exige el consentimiento `health_data`. Los usuarios necesitan además vínculo con el paciente
 (404 si no); el reloj solo escribe sobre su propio paciente.
@@ -76,13 +76,25 @@ class DoseService:
         self._patients = PatientService(session)
         self._consents = ConsentService(session)
 
-    # ─── Reloj: subir eventos ─────────────────────────────────────────────────
+    # ─── Subir eventos (reloj o web) ──────────────────────────────────────────
 
     async def record(self, device: CurrentDevice, batch: DoseEventBatch) -> DoseEventBatchResult:
         patient = await self._plan.get_patient(device.patient_id)
         if patient is None:
             raise patient_not_found()
         await self._consents.require_health_data(patient.id)
+        return await self._store(patient, device.id, batch)
+
+    async def record_for_patient(
+        self, user: CurrentUser, patient_id: uuid.UUID, batch: DoseEventBatch
+    ) -> DoseEventBatchResult:
+        """Tomas marcadas desde la web: el propio paciente o un cuidador vinculado; sin reloj."""
+        patient = await self._patients.health_access(user, patient_id)
+        return await self._store(patient, None, batch)
+
+    async def _store(
+        self, patient: Patient, device_id: uuid.UUID | None, batch: DoseEventBatch
+    ) -> DoseEventBatchResult:
         tz = ZoneInfo(patient.timezone)
         rules = {
             rule.schedule_id: rule
@@ -91,13 +103,15 @@ class DoseService:
             )
         }
         # ponytail: un INSERT por evento (máx. 100); uno múltiple si el volumen lo pide
-        results = [await self._record_one(device, patient.id, tz, rules, e) for e in batch.events]
+        results = [
+            await self._record_one(device_id, patient.id, tz, rules, e) for e in batch.events
+        ]
         await self._session.commit()
         return DoseEventBatchResult(results=results)
 
     async def _record_one(
         self,
-        device: CurrentDevice,
+        device_id: uuid.UUID | None,
         patient_id: uuid.UUID,
         tz: ZoneInfo,
         rules: dict[uuid.UUID, ScheduleRule],
@@ -118,7 +132,7 @@ class DoseService:
             DoseEvent(
                 event_id=event.event_id,
                 patient_id=patient_id,
-                device_id=device.id,
+                device_id=device_id,
                 schedule_id=event.schedule_id,
                 medication_id=rule.medication_id,
                 scheduled_at=event.scheduled_at,
