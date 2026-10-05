@@ -127,6 +127,9 @@ async def test_processing_computes_the_summary_and_the_pdf(
     assert report["summary"]["missed"] == 2
     assert report["summary"]["percentage"] == 57.1
     assert report["summary"]["byMedication"][0]["medicationName"] == "Metformina"
+    assert report["summary"]["byMedication"][0]["scheduled"] == 7
+    assert report["summary"]["byMedication"][0]["dosage"]
+    assert len(report["summary"]["byDay"]) == 7
     assert await processor.process_pending(MONDAY_8AM) == 0  # ya no queda nada pendiente
 
 

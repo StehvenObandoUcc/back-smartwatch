@@ -8,10 +8,19 @@ from app.core.schemas import ApiModel
 class MedicationAdherenceOut(ApiModel):
     medication_id: uuid.UUID
     medication_name: str
+    dosage: str
+    scheduled: int
     taken: int
     skipped: int
     missed: int
     percentage: float | None
+
+
+class DayAdherenceOut(ApiModel):
+    date: date
+    taken: int
+    skipped: int
+    missed: int
 
 
 class ReportSummaryOut(ApiModel):
@@ -20,6 +29,7 @@ class ReportSummaryOut(ApiModel):
     missed: int
     percentage: float | None
     by_medication: list[MedicationAdherenceOut]
+    by_day: list[DayAdherenceOut]
 
 
 class ReportOut(ApiModel):
