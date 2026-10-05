@@ -42,6 +42,20 @@ async def create_my_dose_events(
     return await service.record(device, data)
 
 
+@router.post(
+    "/patients/{patientId}/dose-events",
+    operation_id="createPatientDoseEvents",
+    summary="Registrar tomas desde la web (lote, idempotente)",
+)
+async def create_patient_dose_events(
+    patient_id: PatientIdPath,
+    data: DoseEventBatch,
+    user: CurrentUserDep,
+    service: DoseServiceDep,
+) -> DoseEventBatchResult:
+    return await service.record_for_patient(user, patient_id, data)
+
+
 @router.get(
     "/patients/{patientId}/dose-history",
     operation_id="listDoseHistory",
