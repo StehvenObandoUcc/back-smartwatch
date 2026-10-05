@@ -144,7 +144,7 @@ async def test_web_chat_streams_sse_events_and_counts_tokens(
         ("assistant", "Hola, ¿en qué te ayudo?"),
         ("user", "¿Qué me toca esta noche?"),
     ]
-    assert call["max_tokens"] == 500
+    assert call["max_tokens"] == 1500  # el razonamiento del modelo cuenta como tokens
     [usage] = await _usage(db_engine)
     assert (usage["messages"], usage["input_tokens"], usage["output_tokens"]) == (1, 120, 8)
 
@@ -409,7 +409,7 @@ async def test_watch_chat_returns_a_short_plain_reply(
         "remainingMessages": 2,
     }
     call = provider.calls[0]
-    assert call["max_tokens"] == 150
+    assert call["max_tokens"] == 700  # idem; la brevedad la fija el prompt
     assert "3 frases" in call["system"]
     assert "Metformina" in call["system"]
     [usage] = await _usage(db_engine)
