@@ -47,7 +47,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     docs_enabled = settings.app_env == "local"
     app = FastAPI(
         title="API de recordatorios de medicamentos",
-        version="0.5.0",
+        version="0.6.0",
         lifespan=lifespan,
         openapi_url="/openapi.json" if docs_enabled else None,
         docs_url="/docs" if docs_enabled else None,

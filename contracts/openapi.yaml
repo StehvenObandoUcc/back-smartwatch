@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: API de recordatorios de medicamentos
-  version: 0.5.0
+  version: 0.6.0
   x-closed-phase: 3
   description: |
     Contrato de la API. Fuente de verdad del backend y de los clientes generados por el frontend
@@ -1162,6 +1162,43 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+  /patients/{patientId}/dose-events:
+    parameters:
+      - $ref: "#/components/parameters/PatientIdPath"
+    post:
+      tags: [doses]
+      operationId: createPatientDoseEvents
+      x-phase: 4
+      summary: Registrar tomas desde la web (lote, idempotente)
+      description: |
+        Para el paciente con cuenta (su propio perfil) o un cuidador con vínculo activo, cuando el
+        paciente no tiene reloj a mano o se olvidó de marcar. Mismas reglas, cuerpo y respuesta que
+        `POST /devices/me/dose-events`: hasta 100 eventos, idempotente por `eventId` (lo genera el
+        cliente), cada evento se resuelve por separado y el lote responde 200, y una dosis tiene
+        como mucho un evento (`dose_already_recorded`). Requiere el consentimiento `health_data`
+        (403 `consent_required`). Un paciente sin vínculo con el usuario es 404. Los eventos
+        guardados quedan sin dispositivo asociado.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DoseEventBatch"
+      responses:
+        "200":
+          description: Resultado por evento, en el mismo orden.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DoseEventBatchResult"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
         "422":
           $ref: "#/components/responses/ValidationError"
   /patients/{patientId}/dose-history:
