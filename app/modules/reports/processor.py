@@ -94,7 +94,7 @@ class ReportProcessor:
             entries = await load_history(
                 session, patient, report.period_start, report.period_end, now
             )
-            summary = summarize(entries)
+            summary = summarize(entries, report.period_start, report.period_end)
             pdf = await asyncio.to_thread(
                 build_pdf,
                 patient.display_name,
