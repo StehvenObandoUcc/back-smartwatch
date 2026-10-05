@@ -144,7 +144,7 @@ async def test_web_chat_streams_sse_events_and_counts_tokens(
         ("assistant", "Hola, ¿en qué te ayudo?"),
         ("user", "¿Qué me toca esta noche?"),
     ]
-    assert (
+    assert call["max_tokens"] == 1500  # el razonamiento del modelo cuenta como tokens
         call["max_tokens"] == 700
     )  # idem; la brevedad la fija el prompt0  # el razonamiento del modelo cuenta como tokens
     [usage] = await _usage(db_engine)
