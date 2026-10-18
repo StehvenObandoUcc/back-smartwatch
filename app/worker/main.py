@@ -88,7 +88,10 @@ class WorkerSettings:
     ]
     on_startup = startup
     on_shutdown = shutdown
-    redis_settings = RedisSettings.from_dsn(str(get_settings().redis_url))
+    settings = get_settings()
+    redis_settings = RedisSettings.from_dsn(str(settings.redis_url))
+    if settings.redis_skip_cert_verify:
+        redis_settings.ssl_cert_reqs = "none"  # Heroku Redis: certificado autofirmado
     max_jobs = 5
     job_timeout = 120
     keep_result = 0

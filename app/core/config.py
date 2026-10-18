@@ -26,6 +26,10 @@ class Settings(BaseSettings):
 
     database_url: PostgresDsn
     redis_url: RedisDsn
+    # Heroku: Postgres exige SSL (`DATABASE_SSL=true`) y Redis usa TLS con certificado autofirmado
+    # (`REDIS_SKIP_CERT_VERIFY=true`). Ambos están apagados en local.
+    database_ssl: bool = False
+    redis_skip_cert_verify: bool = False
 
     db_pool_size: int = 10
     db_max_overflow: int = 10
