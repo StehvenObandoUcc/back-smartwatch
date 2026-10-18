@@ -1,5 +1,6 @@
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from typing import Any
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -26,6 +27,11 @@ from app.modules.reports.router import router as reports_router
 from app.modules.users.router import router as users_router
 
 
+def redis_tls_options(settings: Settings) -> dict[str, Any]:
+    """Solo en Heroku: el Redis con TLS usa un certificado autofirmado."""
+    return {"ssl_cert_reqs": "none"} if settings.redis_skip_cert_verify else {}
+
+
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or get_settings()
     configure_logging(settings.log_level, json=settings.log_json)
@@ -35,7 +41,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # Engine y Redis no abren conexiones hasta el primer uso.
         app.state.engine = create_engine(settings)
         app.state.session_factory = create_session_factory(app.state.engine)
-        app.state.redis = Redis.from_url(str(settings.redis_url))
+        app.state.redis = Redis.from_url(str(settings.redis_url), **redis_tls_options(settings))
         try:
             yield
         finally:
