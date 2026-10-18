@@ -10,6 +10,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from app.core.deps import AccessTokensDep
 from app.core.errors import ForbiddenError, UnauthorizedError
+from app.core.rate_limit import RateLimiter
 from app.core.security import AccessClaims, InvalidTokenError, TokenType
 
 _bearer = HTTPBearer(auto_error=False)
@@ -46,10 +47,19 @@ def _claims(
         ) from None
 
 
-async def current_user(credentials: BearerDep, tokens: AccessTokensDep) -> CurrentUser:
+async def _count_principal(request: Request, subject: uuid.UUID) -> None:
+    """Tope general por usuario o reloj: frena el abuso de datos de salud con un token válido."""
+    limiter = RateLimiter(request.app.state.redis)
+    await limiter.hit("principal", str(subject), request.app.state.settings.rate_principal)
+
+
+async def current_user(
+    request: Request, credentials: BearerDep, tokens: AccessTokensDep
+) -> CurrentUser:
     claims = _claims(credentials, tokens)
     if claims.token_type is not TokenType.USER or claims.role is None:
         raise ForbiddenError("wrong_token_type", "Esta ruta requiere una sesión de usuario.")
+    await _count_principal(request, claims.subject)
     return CurrentUser(id=claims.subject, role=claims.role)
 
 
@@ -62,6 +72,7 @@ async def current_device(
     check: DeviceActiveCheck | None = getattr(request.app.state, "device_active_check", None)
     if check is not None and not await check(request, claims.subject):
         raise UnauthorizedError("device_unpaired", "El reloj ya no está vinculado.")
+    await _count_principal(request, claims.subject)
     return CurrentDevice(id=claims.subject, patient_id=claims.patient_id)
 
 
