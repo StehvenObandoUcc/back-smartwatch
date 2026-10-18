@@ -10,7 +10,7 @@ from app.core.config import Settings, get_settings
 from app.core.db import create_engine, create_session_factory
 from app.core.errors import register_error_handlers
 from app.core.logging import configure_logging
-from app.core.middleware import RequestContextMiddleware
+from app.core.middleware import RequestContextMiddleware, SecurityHeadersMiddleware
 from app.core.security import AccessTokenService, PasswordService
 from app.modules.auth.router import router as auth_router
 from app.modules.chat.provider import build_provider
@@ -75,6 +75,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         expose_headers=["Retry-After", "X-Request-ID", "ETag"],
     )
     app.add_middleware(RequestContextMiddleware)
+    app.add_middleware(SecurityHeadersMiddleware)
     register_error_handlers(app)
 
     app.include_router(health_router)
