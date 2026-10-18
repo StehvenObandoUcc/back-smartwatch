@@ -126,6 +126,11 @@ class Settings(BaseSettings):
             raise ValueError("CHAT_PROVIDER=deepseek requiere DEEPSEEK_API_KEY")
         if self.chat_provider == "fake" and self.app_env in ("staging", "production"):
             raise ValueError("CHAT_PROVIDER=fake no habla con ningún modelo: solo local y test")
+        if (
+            self.app_env in ("staging", "production")
+            and len(self.jwt_secret.get_secret_value()) < 32
+        ):
+            raise ValueError("JWT_SECRET debe tener al menos 32 caracteres fuera de local y test")
         if self.app_env in ("staging", "production") and "example.com" in self.problem_type_base:
             raise ValueError("PROBLEM_TYPE_BASE: define la URL real de la API")
         secret = self.telegram_webhook_secret
