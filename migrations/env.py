@@ -16,7 +16,7 @@ import app.modules.patients.models
 import app.modules.reports.models
 import app.modules.users.models  # noqa: F401
 from app.core.config import get_settings
-from app.core.db import Base
+from app.core.db import Base, sqlalchemy_url
 
 target_metadata = Base.metadata
 
@@ -26,7 +26,7 @@ def _database_url() -> str:
     url: str | None = context.get_x_argument(as_dictionary=True).get(
         "db_url"
     ) or context.config.attributes.get("db_url")
-    return url or str(get_settings().database_url)
+    return url or sqlalchemy_url(get_settings())
 
 
 def run_migrations_offline() -> None:
