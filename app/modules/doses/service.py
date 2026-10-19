@@ -17,6 +17,7 @@ from app.core.pagination import Page, next_cursor
 from app.core.security import utcnow
 from app.modules.consents.service import ConsentService
 from app.modules.doses.history import (
+    DEFAULT_RANGE_DAYS,
     MAX_RANGE_DAYS,
     HistoryEntry,
     build_history,
@@ -28,6 +29,8 @@ from app.modules.doses.models import DoseEvent
 from app.modules.doses.repository import DoseEventRepository
 from app.modules.doses.schemas import (
     Adherence,
+    DayAdherence,
+    DeviceAdherence,
     DoseEventBatch,
     DoseEventBatchResult,
     DoseEventInput,
@@ -42,13 +45,20 @@ from app.modules.patients.service import PatientService, patient_not_found
 from app.modules.plan.generator import ScheduleRule, day_start, is_scheduled, local_today
 from app.modules.plan.repository import PlanRepository
 
+# El reloj muestra dos semanas; la web, una.
+DEVICE_RANGE_DAYS = 14
+
 
 def resolve_range(
-    from_: date | None, to: date | None, tz: ZoneInfo, now: datetime
+    from_: date | None,
+    to: date | None,
+    tz: ZoneInfo,
+    now: datetime,
+    default_days: int = DEFAULT_RANGE_DAYS,
 ) -> tuple[date, date]:
-    """Rango en fechas locales del paciente: por defecto los últimos 7 días; máximo 90."""
+    """Rango en fechas locales del paciente: por defecto los últimos `default_days`; máximo 90."""
     last = to or local_today(tz, now)
-    first = from_ or default_range(last)[0]
+    first = from_ or default_range(last, default_days)[0]
     if first > last:
         raise UnprocessableError(["query", "from"], "from no puede ser posterior a to")
     if (last - first).days + 1 > MAX_RANGE_DAYS:
@@ -146,6 +156,44 @@ class DoseService:
         if await self._events.event_exists(event.event_id):
             return result("duplicate")
         return result("rejected", "dose_already_recorded")
+
+    # ─── Reloj: adherencia ────────────────────────────────────────────────────
+
+    async def device_adherence(
+        self, device: CurrentDevice, from_: date | None, to: date | None
+    ) -> DeviceAdherence:
+        patient = await self._plan.get_patient(device.patient_id)
+        if patient is None:
+            raise patient_not_found()
+        await self._consents.require_health_data(patient.id)
+        tz = ZoneInfo(patient.timezone)
+        now = utcnow()
+        first, last = resolve_range(from_, to, tz, now, DEVICE_RANGE_DAYS)
+        events = await self._events.in_range(
+            patient.id, day_start(tz, first), day_start(tz, last + timedelta(days=1))
+        )
+        rules = await self._plan.rules(patient.id, first, last, include_archived=True)
+        entries = build_history(rules, events, tz, first, last, now)
+        by_day: dict[date, list[HistoryEntry]] = {}
+        for entry in entries:
+            by_day.setdefault(entry.scheduled_at.date(), []).append(entry)  # día local
+        days = []
+        for offset in range((last - first).days + 1):
+            day = first + timedelta(days=offset)
+            c = count(by_day.get(day, []))
+            days.append(DayAdherence(date=day, taken=c.taken, skipped=c.skipped, missed=c.missed))
+        totals = count(entries)
+        return DeviceAdherence.model_validate(
+            {
+                "from": first,
+                "to": last,
+                "taken": totals.taken,
+                "skipped": totals.skipped,
+                "missed": totals.missed,
+                "percentage": totals.percentage,
+                "days": days,
+            }
+        )
 
     # ─── Web: historial y adherencia ──────────────────────────────────────────
 

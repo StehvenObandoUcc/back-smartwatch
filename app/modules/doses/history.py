@@ -51,8 +51,8 @@ class Counts:
         return round(self.taken / total * 100, 1) if total else None
 
 
-def default_range(today: date) -> tuple[date, date]:
-    return today - timedelta(days=DEFAULT_RANGE_DAYS - 1), today
+def default_range(today: date, days: int = DEFAULT_RANGE_DAYS) -> tuple[date, date]:
+    return today - timedelta(days=days - 1), today
 
 
 def sort_key(entry: HistoryEntry) -> tuple[datetime, uuid.UUID]:

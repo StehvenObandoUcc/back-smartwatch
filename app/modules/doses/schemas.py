@@ -47,6 +47,14 @@ class DoseHistoryPage(ApiModel):
     next_cursor: str | None
 
 
+class DayAdherence(ApiModel):
+    # `date` como nombre de campo sombrearía el tipo: el alias lo deja como `date` en el JSON.
+    day: date = Field(alias="date")
+    taken: int
+    skipped: int
+    missed: int
+
+
 class Adherence(ApiModel):
     # `from` es palabra reservada en Python: el alias lo deja como `from` en el JSON.
     from_: date = Field(alias="from")
@@ -55,3 +63,8 @@ class Adherence(ApiModel):
     skipped: int
     missed: int
     percentage: float | None
+
+
+class DeviceAdherence(Adherence):
+    # Los días del rango, en orden; los días sin dosis van en 0.
+    days: list[DayAdherence]
