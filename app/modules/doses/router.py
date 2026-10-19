@@ -10,6 +10,7 @@ from app.core.pagination import PageDep
 from app.core.params import uuid_path
 from app.modules.doses.schemas import (
     Adherence,
+    DeviceAdherence,
     DoseEventBatch,
     DoseEventBatchResult,
     DoseHistoryPage,
@@ -54,6 +55,20 @@ async def create_patient_dose_events(
     service: DoseServiceDep,
 ) -> DoseEventBatchResult:
     return await service.record_for_patient(user, patient_id, data)
+
+
+@router.get(
+    "/devices/me/adherence",
+    operation_id="getMyDeviceAdherence",
+    summary="Adherencia del paciente del reloj",
+)
+async def get_my_device_adherence(
+    device: CurrentDeviceDep,
+    service: DoseServiceDep,
+    from_: FromQuery = None,
+    to: ToQuery = None,
+) -> DeviceAdherence:
+    return await service.device_adherence(device, from_, to)
 
 
 @router.get(
