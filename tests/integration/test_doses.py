@@ -439,3 +439,66 @@ async def test_range_and_cursor_validation(client: AsyncClient, path: str, query
         assert response.status_code == 200  # adherence no pagina
     else:
         assert_problem(response, 422, "validation_error")
+
+
+# ─── Adherencia desde el reloj ────────────────────────────────────────────────
+
+
+async def test_device_adherence_defaults_to_fourteen_days_with_zeros(client: AsyncClient) -> None:
+    _, _, watch, _, _ = await _setup(client)
+
+    response = await client.get("/devices/me/adherence", headers=watch)
+
+    assert response.status_code == 200
+    body = response.json()
+    assert len(body["days"]) == 14
+    assert [d["date"] for d in body["days"]] == sorted(d["date"] for d in body["days"])
+    assert (body["taken"], body["skipped"], body["missed"]) == (0, 0, 0)
+    assert body["percentage"] is None  # sin dosis vencidas: null, como la web
+
+
+async def test_device_adherence_respects_an_explicit_range(client: AsyncClient) -> None:
+    _, _, watch, _, _ = await _setup(client)
+
+    response = await client.get(
+        "/devices/me/adherence", headers=watch, params={"from": "2026-09-01", "to": "2026-09-03"}
+    )
+
+    assert response.status_code == 200
+    assert [d["date"] for d in response.json()["days"]] == [
+        "2026-09-01",
+        "2026-09-02",
+        "2026-09-03",
+    ]
+
+
+async def test_device_adherence_rejects_an_inverted_range(client: AsyncClient) -> None:
+    _, _, watch, _, _ = await _setup(client)
+
+    response = await client.get(
+        "/devices/me/adherence", headers=watch, params={"from": "2026-09-03", "to": "2026-09-01"}
+    )
+
+    assert_problem(response, 422, "validation_error")
+
+
+async def test_device_adherence_authorization(client: AsyncClient) -> None:
+    owner, _, _, _, _ = await _setup(client)
+
+    assert_problem(await client.get("/devices/me/adherence"), 401, "missing_token")
+    assert_problem(
+        await client.get("/devices/me/adherence", headers=bearer(owner)), 403, "wrong_token_type"
+    )
+
+
+async def test_device_adherence_requires_health_consent(client: AsyncClient) -> None:
+    owner, _, watch, _, _ = await _setup(client)
+    await client.put(
+        "/users/me/consents/health_data",
+        headers=bearer(owner),
+        json={"granted": False, "version": "v1"},
+    )
+
+    assert_problem(
+        await client.get("/devices/me/adherence", headers=watch), 403, "consent_required"
+    )
