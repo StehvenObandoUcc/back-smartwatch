@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: API de recordatorios de medicamentos
-  version: 0.7.0
+  version: 0.8.0
   x-closed-phase: 3
   description: |
     Contrato de la API. Fuente de verdad del backend y de los clientes generados por el frontend
@@ -1130,6 +1130,34 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+  /devices/me/adherence:
+    get:
+      tags: [doses]
+      operationId: getMyDeviceAdherence
+      x-phase: 4
+      summary: Adherencia del paciente del reloj
+      description: |
+        Solo con token de reloj (403 con token de usuario). El paciente es el del reloj vinculado.
+        Mismas reglas que `GET /patients/{patientId}/adherence`: `percentage` = taken / (taken +
+        skipped + missed) * 100 sobre las dosis vencidas, o null si no hubo ninguna. Rango por
+        defecto: los últimos 14 días en la zona horaria del paciente; máximo 90 días. Requiere el
+        consentimiento `health_data` (403 `consent_required`).
+      parameters:
+        - $ref: "#/components/parameters/FromQuery"
+        - $ref: "#/components/parameters/ToQuery"
+      responses:
+        "200":
+          description: Adherencia del rango, con el desglose diario.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeviceAdherence"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "422":
+          $ref: "#/components/responses/ValidationError"
   /devices/me/dose-events:
     post:
       tags: [doses]
@@ -2681,6 +2709,36 @@ components:
           oneOf:
             - type: string
             - type: "null"
+    DeviceAdherence:
+      type: object
+      required: [from, to, taken, skipped, missed, percentage, days]
+      properties:
+        from:
+          type: string
+          format: date
+        to:
+          type: string
+          format: date
+        taken:
+          type: integer
+          minimum: 0
+        skipped:
+          type: integer
+          minimum: 0
+        missed:
+          type: integer
+          minimum: 0
+        percentage:
+          oneOf:
+            - type: number
+              minimum: 0
+              maximum: 100
+            - type: "null"
+        days:
+          type: array
+          description: Un elemento por cada día del rango, en orden; los días sin dosis van en 0.
+          items:
+            $ref: "#/components/schemas/DayAdherence"
     Adherence:
       type: object
       required: [from, to, taken, skipped, missed, percentage]
