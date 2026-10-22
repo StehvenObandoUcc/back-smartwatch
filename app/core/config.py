@@ -97,6 +97,9 @@ class Settings(BaseSettings):
     argon2_parallelism: int = 4
 
     # Límites de peticiones
+    # Proxies de confianza delante de la API que añaden su entrada a `X-Forwarded-For`: 0 en
+    # local (se usa la IP de la conexión), 1 con Heroku, 2 con Vercel + Heroku.
+    trusted_proxy_hops: int = 0
     rate_register_ip: RateLimit = RateLimit(limit=5, window_seconds=3600)
     rate_login_ip: RateLimit = RateLimit(limit=20, window_seconds=900)
     rate_login_email: RateLimit = RateLimit(limit=5, window_seconds=900)
