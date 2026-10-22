@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: API de recordatorios de medicamentos
-  version: 0.8.0
+  version: 0.9.0
   x-closed-phase: 3
   description: |
     Contrato de la API. Fuente de verdad del backend y de los clientes generados por el frontend
@@ -58,6 +58,8 @@ info:
       en PDF y chat con IA (SSE para la web, respuesta corta para el reloj). El envío de avisos
       (alerta de dosis omitida, reporte semanal) lo hace un worker en segundo plano: no hay
       endpoint para dispararlos.
+    - 4 Tras el E2E con el reloj: tomas y adherencia desde la web y el reloj, medicamentos
+      creados desde el reloj (también por voz con el asistente) y desvinculación desde el reloj.
 servers:
   - url: http://localhost:8000
     description: Desarrollo local
@@ -762,11 +764,67 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Device"
+                $ref: "#/components/schemas/MyDevice"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+    delete:
+      tags: [devices]
+      operationId: unpairMyDevice
+      x-phase: 4
+      summary: El reloj se desvincula a sí mismo
+      description: |
+        Solo con token de reloj; un token de usuario recibe 403. Revoca de inmediato el token de
+        acceso y el refresh token del reloj, y el reloj deja de aparecer en
+        `GET /patients/{patientId}/devices`. Con un token ya revocado responde 401
+        (`code: device_unpaired`); el reloj puede tratar 204 y 401 igual.
+      responses:
+        "204":
+          description: Reloj desvinculado.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /devices/me/medications:
+    post:
+      tags: [medications]
+      operationId: createMyMedication
+      x-phase: 4
+      summary: Crear un medicamento con su horario desde el reloj
+      description: |
+        Solo con token de reloj (403 con token de usuario). Crea el medicamento y su horario para
+        el paciente vinculado, en una sola transacción, y sube la versión del plan (cambia el
+        `ETag` de `GET /devices/me/plan`). Requiere el consentimiento `health_data`
+        (403 `consent_required`).
+
+        Idempotente por `clientId` (lo genera el reloj): repetir la petición con el mismo
+        `clientId` responde 200 con lo ya creado, sin crear nada nuevo ni comparar el cuerpo.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DeviceMedicationCreate"
+      responses:
+        "200":
+          description: Ya existía un medicamento con ese `clientId`.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MedicationWithSchedule"
+        "201":
+          description: Medicamento y horario creados.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MedicationWithSchedule"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "422":
+          $ref: "#/components/responses/ValidationError"
   /devices/me/push-token:
     put:
       tags: [devices]
@@ -1724,12 +1782,24 @@ paths:
         consentimientos (`health_data` y `ai_chat` del paciente) que el chat web, pero responde JSON sin streaming y
         con una respuesta corta (como máximo 3 frases, sin listas ni formato) para leerla en voz
         alta. El límite diario cuenta por reloj.
+
+        Agregar un medicamento por voz (fase 4), en dos pasos:
+        1. Si el usuario pide agregar un medicamento nuevo ("agrega Losartán 50 mg a las 8"), la
+           respuesta trae `pendingAction` con su resumen y no crea nada. Si falta un dato
+           (nombre, dosis u hora), el asistente lo pregunta y no hay `pendingAction`.
+        2. El reloj confirma con `{ "confirmActionId": "<pendingAction.id>" }` (sin `message`).
+           Entonces se crea igual que en `POST /devices/me/medications` y la respuesta trae
+           `actions: [{ type: medication_created, medicationId, scheduleId }]` para sincronizar
+           el plan al momento. Confirmar no llama al modelo ni gasta el cupo diario; reintentar
+           la confirmación devuelve el mismo medicamento. Una propuesta caduca a los 10 minutos
+           o si es de otro reloj: 404 (`code: chat_action_not_found`).
+        El asistente nunca modifica ni borra medicamentos o dosis existentes.
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/ChatRequest"
+              $ref: "#/components/schemas/WatchChatRequest"
       responses:
         "200":
           description: Respuesta corta.
@@ -1741,6 +1811,8 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
         "422":
           $ref: "#/components/responses/ValidationError"
         "429":
@@ -2361,6 +2433,16 @@ components:
             - type: "null"
         hasPushToken:
           type: boolean
+    MyDevice:
+      description: El reloj autenticado, con el nombre del paciente para mostrarlo o decirlo.
+      allOf:
+        - $ref: "#/components/schemas/Device"
+        - type: object
+          required: [patientDisplayName]
+          properties:
+            patientDisplayName:
+              type: string
+              examples: ["Marta"]
     DevicePage:
       type: object
       required: [items, nextCursor]
@@ -2432,6 +2514,34 @@ components:
           maxLength: 500
         color:
           $ref: "#/components/schemas/Color"
+    DeviceMedicationCreate:
+      type: object
+      required: [clientId, name, dosage, schedule]
+      properties:
+        clientId:
+          type: string
+          format: uuid
+          description: Lo genera el reloj; hace la petición idempotente.
+        name:
+          type: string
+          minLength: 1
+          maxLength: 120
+        dosage:
+          type: string
+          minLength: 1
+          maxLength: 80
+        color:
+          $ref: "#/components/schemas/Color"
+        schedule:
+          $ref: "#/components/schemas/ScheduleCreate"
+    MedicationWithSchedule:
+      type: object
+      required: [medication, schedule]
+      properties:
+        medication:
+          $ref: "#/components/schemas/Medication"
+        schedule:
+          $ref: "#/components/schemas/Schedule"
     MedicationUpdate:
       type: object
       minProperties: 1
@@ -3025,6 +3135,24 @@ components:
           maxItems: 10
           items:
             $ref: "#/components/schemas/ChatTurn"
+    WatchChatRequest:
+      type: object
+      description: Exactamente uno de `message` o `confirmActionId` (si no, 422).
+      properties:
+        message:
+          type: string
+          minLength: 1
+          maxLength: 500
+        history:
+          type: array
+          description: Turnos anteriores, del más antiguo al más reciente.
+          maxItems: 10
+          items:
+            $ref: "#/components/schemas/ChatTurn"
+        confirmActionId:
+          type: string
+          format: uuid
+          description: Confirma una `pendingAction` propuesta antes.
     WatchChatReply:
       type: object
       required: [reply, remainingMessages]
@@ -3035,3 +3163,39 @@ components:
         remainingMessages:
           type: integer
           minimum: 0
+        pendingAction:
+          description: Acción propuesta que espera confirmación; `null` si no hay ninguna.
+          oneOf:
+            - $ref: "#/components/schemas/PendingAction"
+            - type: "null"
+        actions:
+          type: array
+          description: Acciones ya ejecutadas en esta respuesta (vacío si ninguna).
+          items:
+            $ref: "#/components/schemas/ChatAction"
+    PendingAction:
+      type: object
+      required: [id, type, summary]
+      properties:
+        id:
+          type: string
+          format: uuid
+        type:
+          type: string
+          enum: [create_medication]
+        summary:
+          type: string
+          examples: ["Losartán 50 mg a las 08:00 todos los días"]
+    ChatAction:
+      type: object
+      required: [type, medicationId, scheduleId]
+      properties:
+        type:
+          type: string
+          enum: [medication_created]
+        medicationId:
+          type: string
+          format: uuid
+        scheduleId:
+          type: string
+          format: uuid
