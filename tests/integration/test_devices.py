@@ -302,6 +302,46 @@ async def test_watch_registers_push_token(client: AsyncClient) -> None:
     assert me.json()["hasPushToken"] is True
 
 
+async def test_watch_sees_the_patient_name(client: AsyncClient) -> None:
+    patient = await register(client, role="patient", display_name="Marta")
+    watch = await _paired_watch(client, patient, patient["user"]["patientId"])
+
+    me = await client.get("/devices/me", headers=_watch(watch))
+
+    assert me.status_code == 200
+    assert me.json()["patientDisplayName"] == "Marta"
+
+
+async def test_watch_unpairs_itself(client: AsyncClient) -> None:
+    patient = await register(client, role="patient")
+    patient_id = patient["user"]["patientId"]
+    watch = await _paired_watch(client, patient, patient_id)
+
+    response = await client.delete("/devices/me", headers=_watch(watch))
+
+    assert response.status_code == 204
+    assert_problem(await client.get("/devices/me", headers=_watch(watch)), 401, "device_unpaired")
+    assert_problem(
+        await _refresh_watch(client, watch["refreshToken"]), 401, "invalid_refresh_token"
+    )
+    devices = await client.get(f"/patients/{patient_id}/devices", headers=bearer(patient))
+    assert devices.json()["items"] == []
+    # Repetirlo con el token ya revocado: 401, que el reloj trata igual que 204.
+    assert_problem(
+        await client.delete("/devices/me", headers=_watch(watch)), 401, "device_unpaired"
+    )
+
+
+async def test_user_token_cannot_unpair_through_devices_me(client: AsyncClient) -> None:
+    patient = await register(client, role="patient")
+    watch = await _paired_watch(client, patient, patient["user"]["patientId"])
+
+    assert_problem(
+        await client.delete("/devices/me", headers=bearer(patient)), 403, "wrong_token_type"
+    )
+    assert (await client.get("/devices/me", headers=_watch(watch))).status_code == 200
+
+
 # ─── Gestión desde la web ─────────────────────────────────────────────────────
 
 

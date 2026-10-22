@@ -20,6 +20,7 @@ from app.modules.devices.schemas import (
     DeviceOut,
     DevicePage,
     DeviceTokenRequest,
+    MyDeviceOut,
     PairingCodeOut,
     PairingCodeRequest,
     PairingConfirm,
@@ -103,8 +104,19 @@ async def request_device_token(
 
 
 @router.get("/devices/me", operation_id="getMyDevice", summary="El reloj consulta su vinculación")
-async def get_my_device(device: CurrentDeviceDep, service: DeviceServiceDep) -> DeviceOut:
+async def get_my_device(device: CurrentDeviceDep, service: DeviceServiceDep) -> MyDeviceOut:
     return await service.get_me(device)
+
+
+@router.delete(
+    "/devices/me",
+    operation_id="unpairMyDevice",
+    summary="El reloj se desvincula a sí mismo",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def unpair_my_device(device: CurrentDeviceDep, service: DeviceServiceDep) -> Response:
+    await service.unpair_me(device)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.put(

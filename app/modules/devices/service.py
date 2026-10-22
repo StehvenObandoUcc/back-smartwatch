@@ -30,6 +30,7 @@ from app.modules.devices.schemas import (
     DeviceOut,
     DevicePage,
     DeviceRefreshGrant,
+    MyDeviceOut,
     PairingCodeOut,
     PairingCodeRequest,
 )
@@ -218,8 +219,15 @@ class DeviceService:
             raise UnauthorizedError("device_unpaired", "El reloj ya no está vinculado.")
         return device
 
-    async def get_me(self, current: CurrentDevice) -> DeviceOut:
-        return to_device_out(await self._current(current))
+    async def get_me(self, current: CurrentDevice) -> MyDeviceOut:
+        device = await self._current(current)
+        return MyDeviceOut(
+            **to_device_out(device).model_dump(),
+            patient_display_name=await self._devices.patient_display_name(device.patient_id),
+        )
+
+    async def unpair_me(self, current: CurrentDevice) -> None:
+        await self._revoke(await self._current(current))
 
     async def set_push_token(self, current: CurrentDevice, token: str) -> None:
         device = await self._current(current)
@@ -246,6 +254,9 @@ class DeviceService:
             raise device_not_found() from None
         if device.revoked_at is not None:
             return  # idempotente
+        await self._revoke(device)
+
+    async def _revoke(self, device: Device) -> None:
         now = utcnow()
         device.revoked_at = now
         await self._devices.revoke_tokens(device.id, now)

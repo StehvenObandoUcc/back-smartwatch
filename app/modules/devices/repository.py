@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.pagination import Cursor, after_cursor
 from app.modules.auth.models import RefreshToken
 from app.modules.devices.models import Device, PairingCode
+from app.modules.patients.models import Patient
 
 
 class DeviceRepository:
@@ -45,6 +46,12 @@ class DeviceRepository:
             stmt = stmt.where(condition)
         stmt = stmt.order_by(Device.created_at, Device.id).limit(limit + 1)
         return list((await self._session.execute(stmt)).scalars())
+
+    async def patient_display_name(self, patient_id: uuid.UUID) -> str:
+        result = await self._session.execute(
+            select(Patient.display_name).where(Patient.id == patient_id)
+        )
+        return result.scalar_one()
 
     async def revoke_tokens(self, device_id: uuid.UUID, now: datetime) -> None:
         await self._session.execute(

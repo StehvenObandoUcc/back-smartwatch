@@ -49,6 +49,10 @@ class DeviceOut(ApiModel):
     has_push_token: bool
 
 
+class MyDeviceOut(DeviceOut):
+    patient_display_name: str
+
+
 class DevicePage(ApiModel):
     items: list[DeviceOut]
     next_cursor: str | None
