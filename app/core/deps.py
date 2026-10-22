@@ -46,8 +46,25 @@ def _access_tokens(request: Request) -> AccessTokenService:
     return tokens
 
 
+def forwarded_ip(forwarded_for: list[str], peer: str, hops: int) -> str:
+    """IP del cliente tras `hops` proxies de confianza. Cada proxy añade al final de
+    `X-Forwarded-For` la IP que lo llamó, así que el cliente es la entrada `hops` desde el final;
+    lo que hay antes lo escribe el cliente y no es fiable. Con menos entradas, la más antigua.
+
+    ponytail: quien llame directo a Heroku (sin Vercel) puede inventar una entrada y cambiar de
+    clave de límite; los límites por correo y por usuario siguen valiendo. Si hace falta cerrarlo,
+    que Vercel añada una cabecera secreta y solo entonces se cuenten 2 saltos."""
+    entries = [ip.strip() for value in forwarded_for for ip in value.split(",") if ip.strip()]
+    if hops <= 0 or not entries:
+        return peer
+    return entries[-min(hops, len(entries))]
+
+
 def client_ip(request: Request) -> str:
-    return request.client.host if request.client else "unknown"
+    peer = request.client.host if request.client else "unknown"
+    return forwarded_ip(
+        request.headers.getlist("x-forwarded-for"), peer, _settings(request).trusted_proxy_hops
+    )
 
 
 SettingsDep = Annotated[Settings, Depends(_settings)]
