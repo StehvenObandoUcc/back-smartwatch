@@ -1,7 +1,7 @@
 import uuid
 from datetime import date, datetime
 
-from sqlalchemy import ForeignKey, Index, SmallInteger, String, func
+from sqlalchemy import ForeignKey, Index, SmallInteger, String, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -12,9 +12,14 @@ class Medication(UuidPk, CreatedAt, Base):
     """Medicamento de un paciente. Se archiva (`archived_at`): conserva el historial."""
 
     __tablename__ = "medications"
-    __table_args__ = (Index("ix_medications_patient_created", "patient_id", "created_at", "id"),)
+    __table_args__ = (
+        Index("ix_medications_patient_created", "patient_id", "created_at", "id"),
+        UniqueConstraint("patient_id", "client_id"),
+    )
 
     patient_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("patients.id", ondelete="CASCADE"))
+    # Lo genera el reloj al crearlo él mismo: hace idempotente el reintento.
+    client_id: Mapped[uuid.UUID | None]
     name: Mapped[str] = mapped_column(String(120))
     dosage: Mapped[str] = mapped_column(String(80))
     instructions: Mapped[str | None] = mapped_column(String(500))
