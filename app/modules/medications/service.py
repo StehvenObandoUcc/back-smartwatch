@@ -7,20 +7,24 @@ Cada cambio sube la versión del plan (`patients.plan_version`) en la misma tran
 import uuid
 from datetime import date
 
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import CurrentUser
 from app.core.errors import NotFoundError, UnprocessableError
 from app.core.pagination import Page, next_cursor
 from app.core.security import utcnow
+from app.modules.consents.service import ConsentService
 from app.modules.medications.models import Medication, Schedule
 from app.modules.medications.repository import MedicationRepository, ScheduleRepository
 from app.modules.medications.schemas import (
     MAX_SCHEDULES_PER_MEDICATION,
+    DeviceMedicationCreate,
     MedicationCreate,
     MedicationOut,
     MedicationPage,
     MedicationUpdate,
+    MedicationWithSchedule,
     ScheduleCreate,
     ScheduleList,
     ScheduleOut,
@@ -71,6 +75,7 @@ class MedicationService:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
         self._patients = PatientService(session)
+        self._consents = ConsentService(session)
         self._medications = MedicationRepository(session)
         self._schedules = ScheduleRepository(session)
 
@@ -144,6 +149,74 @@ class MedicationService:
         await self._medications.bump_plan_version(patient_id)
         await self._session.commit()
 
+    # ─── Desde el reloj ───────────────────────────────────────────────────────
+
+    async def create_from_device(
+        self, patient_id: uuid.UUID, data: DeviceMedicationCreate
+    ) -> tuple[MedicationWithSchedule, bool]:
+        """Medicamento y horario en una transacción, idempotente por `clientId`. Devuelve lo
+        creado (o lo que ya existía) y si es nuevo. El acceso lo da el token del reloj."""
+        await self._consents.require(patient_id, "health_data")
+        existing = await self._medications.get_by_client_id(patient_id, data.client_id)
+        if existing is not None:
+            return await self._with_schedule(existing, data.schedule), False
+        now = utcnow()
+        medication = Medication(
+            patient_id=patient_id,
+            client_id=data.client_id,
+            name=data.name,
+            dosage=data.dosage,
+            color=data.color,
+            created_at=now,
+            updated_at=now,
+        )
+        self._medications.add(medication)
+        try:
+            await self._session.flush()  # aquí salta el clientId repetido
+            schedule = self._new_schedule(medication.id, data.schedule)
+            await self._medications.bump_plan_version(patient_id)
+            await self._session.commit()
+        except IntegrityError:
+            # Otro reintento con el mismo clientId ganó la carrera: se devuelve el suyo.
+            await self._session.rollback()
+            winner = await self._medications.get_by_client_id(patient_id, data.client_id)
+            if winner is None:
+                raise
+            return await self._with_schedule(winner, data.schedule), False
+        return MedicationWithSchedule(
+            medication=to_medication_out(medication), schedule=to_schedule_out(schedule)
+        ), True
+
+    async def _with_schedule(
+        self, medication: Medication, fallback: ScheduleCreate
+    ) -> MedicationWithSchedule:
+        schedules = await self._schedules.list(medication.id)
+        if schedules:
+            schedule = schedules[0]
+        else:
+            # ponytail: si en la web borraron su horario antes del reintento, se vuelve a crear
+            # con el del cuerpo; el reintento llega en segundos, así que casi nunca pasa.
+            schedule = self._new_schedule(medication.id, fallback)
+            await self._medications.bump_plan_version(medication.patient_id)
+            await self._session.commit()
+        return MedicationWithSchedule(
+            medication=to_medication_out(medication), schedule=to_schedule_out(schedule)
+        )
+
+    def _new_schedule(self, medication_id: uuid.UUID, data: ScheduleCreate) -> Schedule:
+        now = utcnow()
+        schedule = Schedule(
+            medication_id=medication_id,
+            times=data.times,
+            days_of_week=data.days_of_week,
+            start_date=data.start_date,
+            end_date=data.end_date,
+            created_at=now,
+            effective_from=now,
+        )
+        self._medications.add(schedule)
+        return schedule
+
     # ─── Horarios ─────────────────────────────────────────────────────────────
 
     async def list_schedules(
@@ -166,17 +239,7 @@ class MedicationService:
                 ["body"],
                 f"Un medicamento admite como máximo {MAX_SCHEDULES_PER_MEDICATION} horarios",
             )
-        now = utcnow()
-        schedule = Schedule(
-            medication_id=medication_id,
-            times=data.times,
-            days_of_week=data.days_of_week,
-            start_date=data.start_date,
-            end_date=data.end_date,
-            created_at=now,
-            effective_from=now,
-        )
-        self._medications.add(schedule)
+        schedule = self._new_schedule(medication_id, data)
         await self._medications.bump_plan_version(patient_id)
         await self._session.commit()
         return to_schedule_out(schedule)
