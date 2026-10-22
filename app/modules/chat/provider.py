@@ -22,9 +22,16 @@ class Usage:
 
 
 @dataclass(frozen=True, slots=True)
+class ToolCall:
+    name: str
+    arguments: str  # JSON tal como lo escribió el modelo: se valida antes de usarlo
+
+
+@dataclass(frozen=True, slots=True)
 class StreamEvent:
     text: str | None = None
     usage: Usage | None = None
+    tool_call: ToolCall | None = None
 
 
 class ProviderError(Exception):
@@ -37,7 +44,12 @@ class ProviderError(Exception):
 
 class ChatProvider(Protocol):
     def stream(
-        self, system: str, turns: list[Turn], *, max_tokens: int
+        self,
+        system: str,
+        turns: list[Turn],
+        *,
+        max_tokens: int,
+        tools: list[dict[str, Any]] | None = None,
     ) -> AsyncIterator[StreamEvent]: ...
 
     async def aclose(self) -> None: ...
@@ -60,11 +72,19 @@ class DeepSeekProvider:
         )
 
     async def stream(
-        self, system: str, turns: list[Turn], *, max_tokens: int
+        self,
+        system: str,
+        turns: list[Turn],
+        *,
+        max_tokens: int,
+        tools: list[dict[str, Any]] | None = None,
     ) -> AsyncIterator[StreamEvent]:
         messages: Any = [{"role": "system", "content": system}] + [
             {"role": t.role, "content": t.content} for t in turns
         ]
+        extra: Any = {"tools": tools} if tools else {}
+        # Las llamadas a herramientas llegan troceadas: nombre y argumentos por índice.
+        calls: dict[int, list[str]] = {}
         try:
             response = await self._client.chat.completions.create(
                 model=self._model,
@@ -73,10 +93,18 @@ class DeepSeekProvider:
                 temperature=0.3,
                 stream=True,
                 stream_options={"include_usage": True},
+                **extra,
             )
             async for chunk in response:
-                if chunk.choices and chunk.choices[0].delta.content:
-                    yield StreamEvent(text=chunk.choices[0].delta.content)
+                if chunk.choices:
+                    delta = chunk.choices[0].delta
+                    if delta.content:
+                        yield StreamEvent(text=delta.content)
+                    for call in delta.tool_calls or []:
+                        parts = calls.setdefault(call.index, ["", ""])
+                        if call.function:
+                            parts[0] += call.function.name or ""
+                            parts[1] += call.function.arguments or ""
                 if chunk.usage is not None:
                     yield StreamEvent(
                         usage=Usage(chunk.usage.prompt_tokens, chunk.usage.completion_tokens)
@@ -84,6 +112,8 @@ class DeepSeekProvider:
         except Exception as exc:
             # Cualquier fallo del SDK o de la red; solo el tipo, nunca su mensaje.
             raise ProviderError(type(exc).__name__) from None
+        for name, arguments in calls.values():
+            yield StreamEvent(tool_call=ToolCall(name, arguments))
 
     async def aclose(self) -> None:
         await self._client.close()
@@ -93,7 +123,12 @@ class FakeChatProvider:
     """Solo desarrollo y pruebas: responde sin red ni clave, repitiendo la pregunta."""
 
     async def stream(
-        self, system: str, turns: list[Turn], *, max_tokens: int
+        self,
+        system: str,
+        turns: list[Turn],
+        *,
+        max_tokens: int,
+        tools: list[dict[str, Any]] | None = None,
     ) -> AsyncIterator[StreamEvent]:
         question = turns[-1].content if turns else ""
         words = f"Respuesta simulada a: {question}".split(" ")

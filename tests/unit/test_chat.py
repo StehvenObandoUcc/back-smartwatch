@@ -1,4 +1,5 @@
 import json
+import uuid
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -7,14 +8,23 @@ import pytest
 from pydantic import ValidationError
 
 from app.core.config import Settings
-from app.modules.chat.prompt import PromptDose, build_system_prompt, shorten_for_watch
+from app.modules.chat.prompt import (
+    CREATE_MEDICATION_TOOL,
+    PromptDose,
+    build_system_prompt,
+    describe_medication,
+    shorten_for_watch,
+)
 from app.modules.chat.provider import (
     DeepSeekProvider,
     FakeChatProvider,
     ProviderError,
     StreamEvent,
+    ToolCall,
     Turn,
 )
+from app.modules.chat.schemas import WatchChatRequest
+from app.modules.chat.service import _draft
 
 BOGOTA = ZoneInfo("America/Bogota")
 NOW = datetime(2026, 10, 7, 9, 30, tzinfo=BOGOTA)
@@ -213,3 +223,113 @@ def test_placeholder_problem_type_base_is_refused_in_production() -> None:
             chat_provider="deepseek",
             deepseek_api_key="sk-x",
         )
+
+
+# ─── Acciones del asistente en el reloj ───────────────────────────────────────
+
+
+@pytest.mark.parametrize(
+    ("times", "days", "expected"),
+    [
+        (["08:00"], [1, 2, 3, 4, 5, 6, 7], "Losartán 50 mg a las 08:00 todos los días"),
+        (
+            ["08:00", "20:00"],
+            [1, 3, 5],
+            "Losartán 50 mg a las 08:00 y 20:00 los lunes, miércoles y viernes",
+        ),
+        (
+            ["07:00", "15:00", "23:00"],
+            [7],
+            "Losartán 50 mg a las 07:00, 15:00 y 23:00 los domingos",
+        ),
+    ],
+)
+def test_medication_summary_reads_naturally(
+    times: list[str], days: list[int], expected: str
+) -> None:
+    assert describe_medication("Losartán", "50 mg", times, days) == expected
+
+
+def test_only_the_watch_prompt_can_add_medications() -> None:
+    assert "create_medication" in build_system_prompt(NOW, [], short=True)
+    assert "create_medication" not in build_system_prompt(NOW, [], short=False)
+
+
+@pytest.mark.parametrize("body", [{}, {"message": "hola", "confirmActionId": str(uuid.uuid4())}])
+def test_watch_request_needs_exactly_one_of_message_or_confirmation(body: dict[str, str]) -> None:
+    with pytest.raises(ValidationError):
+        WatchChatRequest.model_validate(body)
+
+
+def test_tool_arguments_are_validated_like_the_web() -> None:
+    valid = ToolCall(
+        "create_medication", '{"name": "Losartán", "dosage": "50 mg", "times": ["08:00"]}'
+    )
+    draft = _draft([ToolCall("otra", "{}"), valid])
+
+    assert draft is not None
+    assert draft.days_of_week == [1, 2, 3, 4, 5, 6, 7]
+    assert (
+        _draft([ToolCall("create_medication", '{"name": "X", "dosage": "1", "times": ["8"]}')])
+        is None
+    )
+    assert _draft([ToolCall("create_medication", "no es json")]) is None
+    assert _draft([]) is None
+
+
+def _tool_chunk(index: int, name: str | None, arguments: str) -> str:
+    function = {"arguments": arguments} | ({"name": name} if name else {})
+    call = {"index": index, "function": function} | (
+        {"id": "c1", "type": "function"} if name else {}
+    )
+    body = {
+        "id": "x",
+        "object": "chat.completion.chunk",
+        "created": 1,
+        "model": "deepseek-flash",
+        "choices": [{"index": 0, "delta": {"tool_calls": [call]}}],
+    }
+    return f"data: {json.dumps(body)}\n\n"
+
+
+async def test_deepseek_sends_tools_and_joins_streamed_tool_calls() -> None:
+    seen: list[httpx2.Request] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        seen.append(request)
+        sse = (
+            _tool_chunk(0, "create_medication", '{"name": "Los')
+            + _tool_chunk(0, None, 'artán", "dosage": "50 mg", "times": ["08:00"]}')
+            + "data: [DONE]\n\n"
+        )
+        return httpx2.Response(200, headers={"content-type": "text/event-stream"}, content=sse)
+
+    provider = _deepseek(httpx2.MockTransport(handler))
+    events = [
+        e
+        async for e in provider.stream(
+            "s", [Turn("user", "agrega")], max_tokens=5, tools=[CREATE_MEDICATION_TOOL]
+        )
+    ]
+
+    [call] = [e.tool_call for e in events if e.tool_call]
+    assert call.name == "create_medication"
+    assert json.loads(call.arguments)["name"] == "Losartán"
+    assert json.loads(seen[0].content)["tools"][0]["function"]["name"] == "create_medication"
+    await provider.aclose()
+
+
+async def test_deepseek_without_tools_does_not_send_them() -> None:
+    seen: list[httpx2.Request] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        seen.append(request)
+        return httpx2.Response(
+            200, headers={"content-type": "text/event-stream"}, content="data: [DONE]\n\n"
+        )
+
+    provider = _deepseek(httpx2.MockTransport(handler))
+    _ = [e async for e in provider.stream("s", [Turn("user", "hola")], max_tokens=5)]
+
+    assert "tools" not in json.loads(seen[0].content)
+    await provider.aclose()

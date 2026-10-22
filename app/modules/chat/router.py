@@ -5,9 +5,9 @@ from fastapi import APIRouter, Depends, Request
 from fastapi.responses import StreamingResponse
 
 from app.core.auth import CurrentDeviceDep, CurrentUserDep
-from app.core.deps import RateLimiterDep, SessionDep, SettingsDep
+from app.core.deps import RateLimiterDep, RedisDep, SessionDep, SettingsDep
 from app.core.params import uuid_path
-from app.modules.chat.schemas import ChatRequest, WatchChatReply
+from app.modules.chat.schemas import ChatRequest, WatchChatReply, WatchChatRequest
 from app.modules.chat.service import ChatService
 from app.modules.patients.service import patient_not_found
 
@@ -17,7 +17,11 @@ PatientIdPath = Annotated[uuid.UUID, uuid_path("patientId", patient_not_found)]
 
 
 def get_chat_service(
-    request: Request, session: SessionDep, settings: SettingsDep, limiter: RateLimiterDep
+    request: Request,
+    session: SessionDep,
+    settings: SettingsDep,
+    limiter: RateLimiterDep,
+    redis: RedisDep,
 ) -> ChatService:
     return ChatService(
         session,
@@ -25,6 +29,7 @@ def get_chat_service(
         settings,
         request.app.state.chat_provider,
         limiter,
+        redis,
     )
 
 
@@ -55,6 +60,6 @@ async def send_chat_message(
     summary="Preguntar al asistente desde el reloj (respuesta corta)",
 )
 async def send_my_chat_message(
-    data: ChatRequest, device: CurrentDeviceDep, service: ServiceDep
+    data: WatchChatRequest, device: CurrentDeviceDep, service: ServiceDep
 ) -> WatchChatReply:
     return await service.reply_watch(device, data)
