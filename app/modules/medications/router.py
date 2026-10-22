@@ -3,15 +3,17 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query, Response, status
 
-from app.core.auth import CurrentUserDep
+from app.core.auth import CurrentDeviceDep, CurrentUserDep
 from app.core.deps import SessionDep
 from app.core.pagination import PageDep
 from app.core.params import uuid_path
 from app.modules.medications.schemas import (
+    DeviceMedicationCreate,
     MedicationCreate,
     MedicationOut,
     MedicationPage,
     MedicationUpdate,
+    MedicationWithSchedule,
     ScheduleCreate,
     ScheduleList,
     ScheduleOut,
@@ -163,3 +165,22 @@ async def delete_schedule(
 ) -> Response:
     await service.delete_schedule(user, patient_id, medication_id, schedule_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post(
+    "/devices/me/medications",
+    operation_id="createMyMedication",
+    summary="Crear un medicamento con su horario desde el reloj",
+    status_code=status.HTTP_201_CREATED,
+    responses={200: {"model": MedicationWithSchedule, "description": "Ya existía."}},
+)
+async def create_my_medication(
+    data: DeviceMedicationCreate,
+    device: CurrentDeviceDep,
+    service: ServiceDep,
+    response: Response,
+) -> MedicationWithSchedule:
+    result, created = await service.create_from_device(device.patient_id, data)
+    if not created:
+        response.status_code = status.HTTP_200_OK
+    return result

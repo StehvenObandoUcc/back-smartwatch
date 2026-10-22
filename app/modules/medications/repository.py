@@ -20,6 +20,16 @@ class MedicationRepository:
         )
         return result.scalar_one_or_none()
 
+    async def get_by_client_id(
+        self, patient_id: uuid.UUID, client_id: uuid.UUID
+    ) -> Medication | None:
+        result = await self._session.execute(
+            select(Medication).where(
+                Medication.patient_id == patient_id, Medication.client_id == client_id
+            )
+        )
+        return result.scalar_one_or_none()
+
     async def list(
         self, patient_id: uuid.UUID, include_archived: bool, cursor: Cursor | None, limit: int
     ) -> list[Medication]:

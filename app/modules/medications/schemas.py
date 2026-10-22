@@ -94,6 +94,19 @@ class ScheduleCreate(ApiModel):
         return self
 
 
+class DeviceMedicationCreate(ApiModel):
+    client_id: uuid.UUID
+    name: Name
+    dosage: Dosage
+    color: Color = DEFAULT_COLOR
+    schedule: ScheduleCreate
+
+
+class MedicationWithSchedule(ApiModel):
+    medication: MedicationOut
+    schedule: ScheduleOut
+
+
 class ScheduleUpdate(ApiModel):
     times: Times | None = None
     days_of_week: Days | None = None
