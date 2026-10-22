@@ -1,5 +1,6 @@
 """Medicamentos, horarios y plan: autorización, consentimiento, generación y ETag."""
 
+import uuid
 from collections.abc import AsyncIterator
 from datetime import datetime, timedelta
 from typing import Any
@@ -456,3 +457,99 @@ async def test_unpaired_watch_cannot_read_plan(client: AsyncClient) -> None:
     await client.delete(f"/devices/{device_id}", headers=bearer(owner))
 
     assert_problem(await _plan(client, watch), 401, "device_unpaired")
+
+
+# ─── Medicamentos creados desde el reloj ──────────────────────────────────────
+
+
+def _watch_medication(**overrides: Any) -> dict[str, Any]:
+    return {
+        "clientId": str(uuid.uuid4()),
+        "name": "Losartán",
+        "dosage": "50 mg",
+        "schedule": {
+            "times": ["08:00"],
+            "daysOfWeek": [1, 2, 3, 4, 5, 6, 7],
+            "startDate": str(_today()),
+        },
+        **overrides,
+    }
+
+
+async def test_watch_creates_a_medication_that_enters_the_plan(client: AsyncClient) -> None:
+    owner, patient_id = await _patient(client)
+    watch = await _watch(client, owner, patient_id)
+    before = await _plan(client, watch)
+
+    response = await client.post("/devices/me/medications", headers=watch, json=_watch_medication())
+
+    assert response.status_code == 201, response.text
+    body = response.json()
+    assert body["medication"]["name"] == "Losartán"
+    assert body["medication"]["color"] == "#3B82F6"
+    assert body["schedule"]["medicationId"] == body["medication"]["id"]
+    after = await client.get(
+        "/devices/me/plan", headers={**watch, "If-None-Match": before.headers["etag"]}
+    )
+    assert after.status_code == 200
+    assert after.json()["version"] == before.json()["version"] + 1
+    listed = await client.get(f"/patients/{patient_id}/medications", headers=bearer(owner))
+    assert [m["id"] for m in listed.json()["items"]] == [body["medication"]["id"]]
+
+
+async def test_watch_medication_is_idempotent_by_client_id(client: AsyncClient) -> None:
+    owner, patient_id = await _patient(client)
+    watch = await _watch(client, owner, patient_id)
+    payload = _watch_medication()
+
+    first = await client.post("/devices/me/medications", headers=watch, json=payload)
+    retry = await client.post(
+        "/devices/me/medications", headers=watch, json={**payload, "name": "Otro nombre"}
+    )
+
+    assert first.status_code == 201
+    assert retry.status_code == 200
+    assert retry.json() == first.json()
+    listed = await client.get(f"/patients/{patient_id}/medications", headers=bearer(owner))
+    assert len(listed.json()["items"]) == 1
+
+
+async def test_watch_medication_requires_health_consent(client: AsyncClient) -> None:
+    owner, patient_id = await _patient(client, consent=False)
+    watch = await _watch(client, owner, patient_id)
+
+    response = await client.post("/devices/me/medications", headers=watch, json=_watch_medication())
+
+    assert_problem(response, 403, "consent_required")
+
+
+async def test_user_token_cannot_create_through_devices_me(client: AsyncClient) -> None:
+    owner, _ = await _patient(client)
+
+    response = await client.post(
+        "/devices/me/medications", headers=bearer(owner), json=_watch_medication()
+    )
+
+    assert_problem(response, 403, "wrong_token_type")
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"clientId": "no-es-uuid"},
+        {"name": ""},
+        {"schedule": {"times": ["25:00"], "daysOfWeek": [1], "startDate": "2026-10-22"}},
+        {"schedule": None},
+    ],
+)
+async def test_watch_medication_is_validated(
+    client: AsyncClient, overrides: dict[str, Any]
+) -> None:
+    owner, patient_id = await _patient(client)
+    watch = await _watch(client, owner, patient_id)
+
+    response = await client.post(
+        "/devices/me/medications", headers=watch, json=_watch_medication(**overrides)
+    )
+
+    assert response.status_code == 422
