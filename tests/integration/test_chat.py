@@ -12,7 +12,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from app.core.config import RateLimit
-from app.modules.chat.provider import ProviderError, StreamEvent, Turn, Usage
+from app.modules.chat.provider import ProviderError, StreamEvent, ToolCall, Turn, Usage
 from tests.conftest import make_client
 from tests.integration.conftest import AppFactory
 from tests.integration.helpers import assert_problem, bearer, register
@@ -31,11 +31,19 @@ class ScriptedProvider:
     calls: list[dict[str, Any]] = field(default_factory=list)
     usage: Usage | None = field(default_factory=lambda: Usage(120, 8))
     delay: float = 0
+    tool_calls: list[ToolCall] = field(default_factory=list)
 
     async def stream(
-        self, system: str, turns: list[Turn], *, max_tokens: int
+        self,
+        system: str,
+        turns: list[Turn],
+        *,
+        max_tokens: int,
+        tools: list[dict[str, Any]] | None = None,
     ) -> AsyncIterator[StreamEvent]:
-        self.calls.append({"system": system, "turns": turns, "max_tokens": max_tokens})
+        self.calls.append(
+            {"system": system, "turns": turns, "max_tokens": max_tokens, "tools": tools}
+        )
         if self.delay:
             await asyncio.sleep(self.delay)
         for index, chunk in enumerate(self.chunks):
@@ -44,6 +52,8 @@ class ScriptedProvider:
             yield StreamEvent(text=chunk)
         if self.fail_at is not None and self.fail_at >= len(self.chunks):
             raise ProviderError("APIConnectionError")
+        for call in self.tool_calls:
+            yield StreamEvent(tool_call=call)
         if self.usage:
             yield StreamEvent(usage=self.usage)
 
@@ -407,6 +417,8 @@ async def test_watch_chat_returns_a_short_plain_reply(
     assert response.json() == {
         "reply": "Esta noche toca la metformina. A las 20:00. Con comida.",
         "remainingMessages": 2,
+        "pendingAction": None,
+        "actions": [],
     }
     call = provider.calls[0]
     assert call["max_tokens"] == 700  # idem; la brevedad la fija el prompt
@@ -441,3 +453,151 @@ async def test_an_unpaired_watch_cannot_chat(chat: tuple[AsyncClient, ScriptedPr
 
     assert_problem(await _ask_watch(client, watch), 401, "device_unpaired")
     assert provider.calls == []
+
+
+# ─── Reloj: agregar un medicamento por voz ────────────────────────────────────
+
+LOSARTAN = ToolCall(
+    "create_medication", '{"name": "Losartán", "dosage": "50 mg", "times": ["08:00"]}'
+)
+
+
+async def _medications(client: AsyncClient, owner: Session, patient_id: str) -> list[Any]:
+    response = await client.get(f"/patients/{patient_id}/medications", headers=bearer(owner))
+    items: list[Any] = response.json()["items"]
+    return items
+
+
+async def _confirm(client: AsyncClient, watch: dict[str, str], action_id: str) -> Response:
+    return await client.post(
+        "/devices/me/chat/messages", headers=watch, json={"confirmActionId": action_id}
+    )
+
+
+async def test_watch_assistant_proposes_then_creates_on_confirmation(
+    chat: tuple[AsyncClient, ScriptedProvider],
+) -> None:
+    client, provider = chat
+    provider.chunks = []
+    provider.tool_calls = [LOSARTAN]
+    owner, patient_id = await _patient(client)
+    watch = await _watch(client, owner, patient_id)
+
+    proposal = await _ask_watch(client, watch, message="Agrega Losartán 50 mg a las 8")
+
+    assert proposal.status_code == 200, proposal.text
+    pending = proposal.json()["pendingAction"]
+    assert pending["type"] == "create_medication"
+    assert pending["summary"] == "Losartán 50 mg a las 08:00 todos los días"
+    assert proposal.json()["reply"] == (
+        "Voy a agregar Losartán 50 mg a las 08:00 todos los días. ¿Lo confirmas?"
+    )
+    assert provider.calls[0]["tools"][0]["function"]["name"] == "create_medication"
+    assert await _medications(client, owner, patient_id) == []  # todavía nada
+    plan = await client.get("/devices/me/plan", headers=watch)
+
+    confirmed = await _confirm(client, watch, pending["id"])
+
+    assert confirmed.status_code == 200, confirmed.text
+    body = confirmed.json()
+    assert body["remainingMessages"] == 2  # confirmar no gasta cupo
+    assert body["pendingAction"] is None
+    [action] = body["actions"]
+    assert action["type"] == "medication_created"
+    [medication] = await _medications(client, owner, patient_id)
+    assert medication["id"] == action["medicationId"]
+    assert (medication["name"], medication["dosage"]) == ("Losartán", "50 mg")
+    after = await client.get(
+        "/devices/me/plan", headers={**watch, "If-None-Match": plan.headers["etag"]}
+    )
+    assert after.status_code == 200
+    assert {d["scheduleId"] for d in after.json()["doses"]} == {action["scheduleId"]}
+    assert len(provider.calls) == 1  # confirmar no llama al modelo
+
+    # Reintentar la confirmación no duplica nada.
+    again = await _confirm(client, watch, pending["id"])
+    assert again.json()["actions"] == body["actions"]
+    assert len(await _medications(client, owner, patient_id)) == 1
+
+
+async def test_unknown_or_foreign_proposals_are_404(
+    chat: tuple[AsyncClient, ScriptedProvider],
+) -> None:
+    client, provider = chat
+    provider.chunks = []
+    provider.tool_calls = [LOSARTAN]
+    owner, patient_id = await _patient(client)
+    other, other_patient = await _patient(client)
+    watch = await _watch(client, owner, patient_id)
+    other_watch = await _watch(client, other, other_patient)
+    pending = (await _ask_watch(client, watch)).json()["pendingAction"]
+
+    foreign = await _confirm(client, other_watch, pending["id"])
+    unknown = await _confirm(client, watch, "00000000-0000-4000-8000-000000000000")
+
+    assert_problem(foreign, 404, "chat_action_not_found")
+    assert_problem(unknown, 404, "chat_action_not_found")
+    assert await _medications(client, other, other_patient) == []
+
+
+async def test_confirmation_needs_the_consents(
+    chat: tuple[AsyncClient, ScriptedProvider],
+) -> None:
+    client, provider = chat
+    provider.chunks = []
+    provider.tool_calls = [LOSARTAN]
+    owner, patient_id = await _patient(client)
+    watch = await _watch(client, owner, patient_id)
+    pending = (await _ask_watch(client, watch)).json()["pendingAction"]
+    await consent(client, owner, "ai_chat", granted=False)
+
+    assert_problem(await _confirm(client, watch, pending["id"]), 403, "consent_required")
+    assert await _medications(client, owner, patient_id) == []
+
+
+async def test_invalid_tool_arguments_ask_again_without_proposing(
+    chat: tuple[AsyncClient, ScriptedProvider],
+) -> None:
+    client, provider = chat
+    provider.chunks = []
+    provider.tool_calls = [
+        ToolCall("create_medication", '{"name": "Losartán", "dosage": "50 mg", "times": ["8"]}')
+    ]
+    owner, patient_id = await _patient(client)
+    watch = await _watch(client, owner, patient_id)
+
+    response = await _ask_watch(client, watch)
+
+    assert response.status_code == 200
+    assert response.json()["pendingAction"] is None
+    assert "nombre, la dosis y la hora" in response.json()["reply"]
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {},
+        {"message": "hola", "confirmActionId": "00000000-0000-4000-8000-000000000000"},
+        {"confirmActionId": "no-es-uuid"},
+    ],
+)
+async def test_watch_chat_needs_message_or_confirmation(
+    chat: tuple[AsyncClient, ScriptedProvider], body: dict[str, Any]
+) -> None:
+    client, provider = chat
+    owner, patient_id = await _patient(client)
+    watch = await _watch(client, owner, patient_id)
+
+    response = await client.post("/devices/me/chat/messages", headers=watch, json=body)
+
+    assert_problem(response, 422, "validation_error")
+    assert provider.calls == []
+
+
+async def test_web_chat_gets_no_tools(chat: tuple[AsyncClient, ScriptedProvider]) -> None:
+    client, provider = chat
+    owner, patient_id = await _patient(client)
+
+    await _ask(client, owner, patient_id)
+
+    assert provider.calls[0]["tools"] is None
