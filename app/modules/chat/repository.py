@@ -1,7 +1,7 @@
 import uuid
 from datetime import date
 
-from sqlalchemy import func, update
+from sqlalchemy import func, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -26,6 +26,14 @@ class ChatUsageRepository:
             .returning(ChatUsage.messages)
         )
         return (await self._session.execute(stmt)).scalar_one_or_none()
+
+    async def messages(self, principal_id: uuid.UUID, day: date) -> int:
+        result = await self._session.execute(
+            select(ChatUsage.messages).where(
+                ChatUsage.principal_id == principal_id, ChatUsage.day == day
+            )
+        )
+        return result.scalar_one_or_none() or 0
 
     async def release(self, principal_id: uuid.UUID, day: date) -> None:
         await self._session.execute(
