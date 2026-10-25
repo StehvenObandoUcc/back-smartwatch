@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -39,6 +39,13 @@ class DoseEventRepository:
         )
         return result.first() is not None
 
+    async def delete(self, patient_id: uuid.UUID, event_id: uuid.UUID) -> None:
+        await self._session.execute(
+            delete(DoseEvent).where(
+                DoseEvent.patient_id == patient_id, DoseEvent.event_id == event_id
+            )
+        )
+
     async def in_range(
         self, patient_id: uuid.UUID, start: datetime, end: datetime
     ) -> list[EventRecord]:
@@ -61,6 +68,7 @@ class DoseEventRepository:
                 scheduled_at=event.scheduled_at,
                 status=event.status,
                 acted_at=event.acted_at,
+                event_id=event.event_id,
             )
             for event, name, dosage in (await self._session.execute(stmt)).all()
         ]
