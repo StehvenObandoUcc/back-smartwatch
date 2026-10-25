@@ -17,6 +17,7 @@ from app.core.params import uuid_path
 from app.modules.auth.schemas import TokenPairOut
 from app.modules.devices.repository import DeviceRepository
 from app.modules.devices.schemas import (
+    BatteryUpdate,
     DeviceOut,
     DevicePage,
     DeviceTokenRequest,
@@ -129,6 +130,19 @@ async def set_my_push_token(
     data: PushTokenUpdate, device: CurrentDeviceDep, service: DeviceServiceDep
 ) -> Response:
     await service.set_push_token(device, data.token)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.put(
+    "/devices/me/battery",
+    operation_id="setMyBattery",
+    summary="El reloj informa su nivel de batería",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def set_my_battery(
+    data: BatteryUpdate, device: CurrentDeviceDep, service: DeviceServiceDep
+) -> Response:
+    await service.set_battery(device, data.level)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
