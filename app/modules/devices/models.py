@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import ForeignKey, Index, String, text
+from sqlalchemy import ForeignKey, Index, SmallInteger, String, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db import Base, CreatedAt, UuidPk
@@ -28,6 +28,8 @@ class Device(UuidPk, CreatedAt, Base):
     paired_at: Mapped[datetime]
     last_seen_at: Mapped[datetime | None]
     push_token: Mapped[str | None] = mapped_column(String(4096))
+    battery_level: Mapped[int | None] = mapped_column(SmallInteger)  # 0-100
+    battery_reported_at: Mapped[datetime | None]
     revoked_at: Mapped[datetime | None]
 
 
