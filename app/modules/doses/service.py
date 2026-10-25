@@ -75,6 +75,7 @@ def _to_item(entry: HistoryEntry) -> DoseHistoryItem:
         scheduled_at=entry.scheduled_at,
         status=cast(DoseStatus, entry.status),
         acted_at=entry.acted_at,
+        event_id=entry.event_id,
     )
 
 
@@ -156,6 +157,24 @@ class DoseService:
         if await self._events.event_exists(event.event_id):
             return result("duplicate")
         return result("rejected", "dose_already_recorded")
+
+    # ─── Deshacer una toma (reloj o web) ──────────────────────────────────────
+
+    async def undo(self, device: CurrentDevice, event_id: uuid.UUID | None) -> None:
+        await self._consents.require_health_data(device.patient_id)
+        await self._delete(device.patient_id, event_id)
+
+    async def undo_for_patient(
+        self, user: CurrentUser, patient_id: uuid.UUID, event_id: uuid.UUID | None
+    ) -> None:
+        patient = await self._patients.health_access(user, patient_id)
+        await self._delete(patient.id, event_id)
+
+    async def _delete(self, patient_id: uuid.UUID, event_id: uuid.UUID | None) -> None:
+        """Idempotente: un evento ajeno, inexistente o mal formado no borra nada."""
+        if event_id is not None:
+            await self._events.delete(patient_id, event_id)
+            await self._session.commit()
 
     # ─── Reloj: adherencia ────────────────────────────────────────────────────
 
