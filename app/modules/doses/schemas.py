@@ -40,6 +40,7 @@ class DoseHistoryItem(ApiModel):
     scheduled_at: datetime
     status: DoseStatus
     acted_at: datetime | None
+    event_id: uuid.UUID | None
 
 
 class DoseHistoryPage(ApiModel):
