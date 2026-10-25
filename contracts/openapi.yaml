@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: API de recordatorios de medicamentos
-  version: 0.9.0
+  version: 0.10.0
   x-closed-phase: 3
   description: |
     Contrato de la API. Fuente de verdad del backend y de los clientes generados por el frontend
@@ -59,7 +59,8 @@ info:
       (alerta de dosis omitida, reporte semanal) lo hace un worker en segundo plano: no hay
       endpoint para dispararlos.
     - 4 Tras el E2E con el reloj: tomas y adherencia desde la web y el reloj, medicamentos
-      creados desde el reloj (también por voz con el asistente) y desvinculación desde el reloj.
+      creados desde el reloj (también por voz con el asistente), desvinculación desde el reloj,
+      batería del reloj y deshacer una toma registrada.
 servers:
   - url: http://localhost:8000
     description: Desarrollo local
@@ -847,6 +848,31 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "422":
           $ref: "#/components/responses/ValidationError"
+  /devices/me/battery:
+    put:
+      tags: [devices]
+      operationId: setMyBattery
+      x-phase: 4
+      summary: El reloj informa su nivel de batería
+      description: |
+        Solo con token de reloj; un token de usuario recibe 403. El reloj lo envía al sincronizar.
+        Guarda el nivel y la hora de recepción, que se ven en `Device` (`batteryLevel`,
+        `batteryReportedAt`). Reemplaza la lectura anterior.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BatteryUpdate"
+      responses:
+        "204":
+          description: Lectura guardada.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "422":
+          $ref: "#/components/responses/ValidationError"
   /patients/{patientId}/devices:
     parameters:
       - $ref: "#/components/parameters/PatientIdPath"
@@ -1250,6 +1276,57 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "422":
           $ref: "#/components/responses/ValidationError"
+  /devices/me/dose-events/{eventId}:
+    delete:
+      tags: [doses]
+      operationId: deleteMyDoseEvent
+      x-phase: 4
+      summary: Deshacer una toma desde el reloj
+      description: |
+        Solo con token de reloj (403 con token de usuario) y solo eventos del paciente del reloj,
+        los haya registrado el reloj o la web.
+        Borra el evento de una dosis: la dosis vuelve a estar pendiente (o `MISSED` si ya pasó
+        su hora), sale del historial y de la adherencia, y la dosis admite un evento nuevo. Para
+        corregir (por ejemplo, de `TAKEN` a `SKIPPED`) se deshace y se registra otro con un
+        `eventId` nuevo. Idempotente: un `eventId` que no existe o ya se deshizo responde 204.
+        Un `eventId` deshecho puede volver a enviarse en un lote. Requiere el consentimiento
+        `health_data` (403 `consent_required`).
+      parameters:
+        - $ref: "#/components/parameters/EventIdPath"
+      responses:
+        "204":
+          description: Evento borrado (o no existía).
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /patients/{patientId}/dose-events/{eventId}:
+    parameters:
+      - $ref: "#/components/parameters/PatientIdPath"
+      - $ref: "#/components/parameters/EventIdPath"
+    delete:
+      tags: [doses]
+      operationId: deletePatientDoseEvent
+      x-phase: 4
+      summary: Deshacer una toma desde la web
+      description: |
+        Para el paciente con cuenta o un cuidador con vínculo activo; un paciente sin vínculo es
+        404. Sirve para eventos del reloj o de la web (el `eventId` está en el historial).
+        Borra el evento de una dosis: la dosis vuelve a estar pendiente (o `MISSED` si ya pasó
+        su hora), sale del historial y de la adherencia, y la dosis admite un evento nuevo. Para
+        corregir (por ejemplo, de `TAKEN` a `SKIPPED`) se deshace y se registra otro con un
+        `eventId` nuevo. Idempotente: un `eventId` que no existe o ya se deshizo responde 204.
+        Un `eventId` deshecho puede volver a enviarse en un lote. Requiere el consentimiento
+        `health_data` (403 `consent_required`).
+      responses:
+        "204":
+          description: Evento borrado (o no existía).
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
   /patients/{patientId}/dose-events:
     parameters:
       - $ref: "#/components/parameters/PatientIdPath"
@@ -1871,6 +1948,14 @@ components:
       schema:
         $ref: "#/components/schemas/ConsentPurpose"
 
+    EventIdPath:
+      name: eventId
+      in: path
+      required: true
+      description: "`eventId` del evento de toma (lo generó el cliente al registrarlo)."
+      schema:
+        type: string
+        format: uuid
     MedicationIdPath:
       name: medicationId
       in: path
@@ -2413,7 +2498,8 @@ components:
           maxLength: 512
     Device:
       type: object
-      required: [id, patientId, model, pairedAt, lastSeenAt, hasPushToken]
+      required:
+        [id, patientId, model, pairedAt, lastSeenAt, hasPushToken, batteryLevel, batteryReportedAt]
       properties:
         id:
           type: string
@@ -2433,6 +2519,19 @@ components:
             - type: "null"
         hasPushToken:
           type: boolean
+        batteryLevel:
+          description: Última batería informada por el reloj (0-100); `null` si nunca la envió.
+          oneOf:
+            - type: integer
+              minimum: 0
+              maximum: 100
+            - type: "null"
+        batteryReportedAt:
+          description: Cuándo llegó esa lectura; `null` si nunca la envió.
+          oneOf:
+            - type: string
+              format: date-time
+            - type: "null"
     MyDevice:
       description: El reloj autenticado, con el nombre del paciente para mostrarlo o decirlo.
       allOf:
@@ -2455,6 +2554,15 @@ components:
           oneOf:
             - type: string
             - type: "null"
+    BatteryUpdate:
+      type: object
+      required: [level]
+      properties:
+        level:
+          type: integer
+          minimum: 0
+          maximum: 100
+          description: Porcentaje de batería.
     PushTokenUpdate:
       type: object
       required: [token]
@@ -2784,7 +2892,8 @@ components:
       enum: [TAKEN, SKIPPED, MISSED]
     DoseHistoryItem:
       type: object
-      required: [scheduleId, medicationId, medicationName, dosage, scheduledAt, status, actedAt]
+      required:
+        [scheduleId, medicationId, medicationName, dosage, scheduledAt, status, actedAt, eventId]
       properties:
         scheduleId:
           type: string
@@ -2807,6 +2916,12 @@ components:
               format: date-time
             - type: "null"
           description: "`null` si `MISSED`."
+        eventId:
+          description: Evento registrado (para deshacerlo); `null` si `MISSED`.
+          oneOf:
+            - type: string
+              format: uuid
+            - type: "null"
     DoseHistoryPage:
       type: object
       required: [items, nextCursor]
