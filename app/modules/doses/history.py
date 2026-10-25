@@ -26,6 +26,7 @@ class EventRecord:
     scheduled_at: datetime
     status: str  # TAKEN | SKIPPED
     acted_at: datetime
+    event_id: uuid.UUID | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -37,6 +38,7 @@ class HistoryEntry:
     scheduled_at: datetime  # en la zona del paciente
     status: str  # TAKEN | SKIPPED | MISSED
     acted_at: datetime | None
+    event_id: uuid.UUID | None = None  # None si MISSED
 
 
 @dataclass(frozen=True, slots=True)
@@ -77,6 +79,7 @@ def build_history(
             e.scheduled_at.astimezone(tz),
             e.status,
             e.acted_at,
+            e.event_id,
         )
         for e in events
     ]
