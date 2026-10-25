@@ -48,6 +48,8 @@ def to_device_out(device: Device) -> DeviceOut:
         paired_at=device.paired_at,
         last_seen_at=device.last_seen_at,
         has_push_token=device.push_token is not None,
+        battery_level=device.battery_level,
+        battery_reported_at=device.battery_reported_at,
     )
 
 
@@ -228,6 +230,12 @@ class DeviceService:
 
     async def unpair_me(self, current: CurrentDevice) -> None:
         await self._revoke(await self._current(current))
+
+    async def set_battery(self, current: CurrentDevice, level: int) -> None:
+        device = await self._current(current)
+        device.battery_level = level
+        device.battery_reported_at = utcnow()
+        await self._session.commit()
 
     async def set_push_token(self, current: CurrentDevice, token: str) -> None:
         device = await self._current(current)

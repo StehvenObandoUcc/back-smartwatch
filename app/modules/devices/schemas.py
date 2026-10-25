@@ -47,6 +47,8 @@ class DeviceOut(ApiModel):
     paired_at: datetime
     last_seen_at: datetime | None
     has_push_token: bool
+    battery_level: int | None
+    battery_reported_at: datetime | None
 
 
 class MyDeviceOut(DeviceOut):
@@ -56,6 +58,10 @@ class MyDeviceOut(DeviceOut):
 class DevicePage(ApiModel):
     items: list[DeviceOut]
     next_cursor: str | None
+
+
+class BatteryUpdate(ApiModel):
+    level: int = Field(ge=0, le=100)
 
 
 class PushTokenUpdate(ApiModel):

@@ -302,6 +302,41 @@ async def test_watch_registers_push_token(client: AsyncClient) -> None:
     assert me.json()["hasPushToken"] is True
 
 
+async def test_watch_reports_its_battery_and_the_web_sees_it(client: AsyncClient) -> None:
+    patient = await register(client, role="patient")
+    patient_id = patient["user"]["patientId"]
+    watch = await _paired_watch(client, patient, patient_id)
+    assert (watch["device"]["batteryLevel"], watch["device"]["batteryReportedAt"]) == (None, None)
+
+    response = await client.put("/devices/me/battery", headers=_watch(watch), json={"level": 42})
+
+    assert response.status_code == 204
+    [device] = (
+        await client.get(f"/patients/{patient_id}/devices", headers=bearer(patient))
+    ).json()["items"]
+    assert device["batteryLevel"] == 42
+    assert device["batteryReportedAt"] is not None
+    assert (await client.get("/devices/me", headers=_watch(watch))).json()["batteryLevel"] == 42
+
+
+@pytest.mark.parametrize("body", [{"level": -1}, {"level": 101}, {"level": "x"}, {}])
+async def test_battery_is_validated(client: AsyncClient, body: dict[str, Any]) -> None:
+    patient = await register(client, role="patient")
+    watch = await _paired_watch(client, patient, patient["user"]["patientId"])
+
+    response = await client.put("/devices/me/battery", headers=_watch(watch), json=body)
+
+    assert response.status_code == 422
+
+
+async def test_user_token_cannot_report_battery(client: AsyncClient) -> None:
+    patient = await register(client, role="patient")
+
+    response = await client.put("/devices/me/battery", headers=bearer(patient), json={"level": 5})
+
+    assert_problem(response, 403, "wrong_token_type")
+
+
 async def test_watch_sees_the_patient_name(client: AsyncClient) -> None:
     patient = await register(client, role="patient", display_name="Marta")
     watch = await _paired_watch(client, patient, patient["user"]["patientId"])
