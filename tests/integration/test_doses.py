@@ -502,3 +502,94 @@ async def test_device_adherence_requires_health_consent(client: AsyncClient) -> 
     assert_problem(
         await client.get("/devices/me/adherence", headers=watch), 403, "consent_required"
     )
+
+
+# ─── Deshacer una toma ────────────────────────────────────────────────────────
+
+
+async def _history(client: AsyncClient, owner: Any, patient_id: str) -> list[Any]:
+    response = await client.get(f"/patients/{patient_id}/dose-history", headers=bearer(owner))
+    items: list[Any] = response.json()["items"]
+    return items
+
+
+async def test_watch_undoes_a_dose_and_can_record_it_again(client: AsyncClient) -> None:
+    owner, patient_id, watch, _, doses = await _setup(client)
+    event = _event(doses[0])
+    await _send(client, watch, event)
+    [item] = await _history(client, owner, patient_id)
+    assert item["eventId"] == event["eventId"]
+
+    response = await client.delete(f"/devices/me/dose-events/{event['eventId']}", headers=watch)
+
+    assert response.status_code == 204
+    assert await _history(client, owner, patient_id) == []
+    # Corregir: otro evento para la misma dosis ya no es dose_already_recorded.
+    fixed = await _send(client, watch, _event(doses[0], status="SKIPPED"))
+    assert fixed.json()["results"][0]["outcome"] == "created"
+    assert [i["status"] for i in await _history(client, owner, patient_id)] == ["SKIPPED"]
+
+
+async def test_web_undoes_a_dose_recorded_by_the_watch(client: AsyncClient) -> None:
+    owner, patient_id, watch, _, doses = await _setup(client)
+    event = _event(doses[0])
+    await _send(client, watch, event)
+
+    response = await client.delete(
+        f"/patients/{patient_id}/dose-events/{event['eventId']}", headers=bearer(owner)
+    )
+
+    assert response.status_code == 204
+    assert await _history(client, owner, patient_id) == []
+
+
+@pytest.mark.parametrize("event_id", [str(uuid.uuid4()), "no-es-uuid"])
+async def test_undo_is_idempotent(client: AsyncClient, event_id: str) -> None:
+    owner, patient_id, watch, _, _ = await _setup(client)
+
+    on_watch = await client.delete(f"/devices/me/dose-events/{event_id}", headers=watch)
+    on_web = await client.delete(
+        f"/patients/{patient_id}/dose-events/{event_id}", headers=bearer(owner)
+    )
+
+    assert (on_watch.status_code, on_web.status_code) == (204, 204)
+
+
+async def test_undo_never_touches_another_patient(client: AsyncClient) -> None:
+    owner, patient_id, watch, _, doses = await _setup(client)
+    other_owner, other_patient, other_watch, _, _ = await _setup(client)
+    event = _event(doses[0])
+    await _send(client, watch, event)
+
+    await client.delete(f"/devices/me/dose-events/{event['eventId']}", headers=other_watch)
+    await client.delete(
+        f"/patients/{other_patient}/dose-events/{event['eventId']}", headers=bearer(other_owner)
+    )
+    stranger = await client.delete(
+        f"/patients/{patient_id}/dose-events/{event['eventId']}", headers=bearer(other_owner)
+    )
+
+    assert_problem(stranger, 404, "patient_not_found")
+    assert len(await _history(client, owner, patient_id)) == 1
+
+
+async def test_undo_requires_health_consent_and_the_right_token(client: AsyncClient) -> None:
+    owner, patient_id, watch, _, doses = await _setup(client)
+    event = _event(doses[0])
+    await _send(client, watch, event)
+    path = f"/devices/me/dose-events/{event['eventId']}"
+
+    assert_problem(await client.delete(path, headers=bearer(owner)), 403, "wrong_token_type")
+    await client.put(
+        "/users/me/consents/health_data",
+        headers=bearer(owner),
+        json={"granted": False, "version": "v1"},
+    )
+    assert_problem(await client.delete(path, headers=watch), 403, "consent_required")
+    assert_problem(
+        await client.delete(
+            f"/patients/{patient_id}/dose-events/{event['eventId']}", headers=bearer(owner)
+        ),
+        403,
+        "consent_required",
+    )
