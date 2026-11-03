@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Exists, Row, exists, func, or_, select, union_all
+from sqlalchemy import Exists, Row, delete, exists, func, or_, select, union_all
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.pagination import Cursor, after_cursor
@@ -63,6 +63,42 @@ class PatientRepository:
 
     def add(self, entity: Patient | CareLink | CaregiverInvitation) -> None:
         self._session.add(entity)
+
+    async def lock_managed_split(
+        self, user_id: uuid.UUID
+    ) -> tuple[list[uuid.UUID], list[uuid.UUID]]:
+        """Pacientes gestionados del cuidador: (solo él los cuida, tienen más cuidadores activos).
+
+        Bloquea las filas de los pacientes gestionados del usuario (en orden de id, para no
+        provocar interbloqueos) antes de contar: así dos cuidadores que borran su cuenta a la vez
+        no pueden dejar el paciente sin nadie que lo gestione.
+        """
+        locked = await self._session.execute(
+            select(Patient.id)
+            .where(Patient.owner_user_id.is_(None), _has_active_link(user_id))
+            .order_by(Patient.id)
+            .with_for_update()
+        )
+        candidates = list(locked.scalars())
+        if not candidates:
+            return [], []
+        others = (
+            select(CareLink.patient_id)
+            .where(
+                CareLink.patient_id.in_(candidates),
+                CareLink.active.is_(True),
+                CareLink.caregiver_user_id != user_id,
+            )
+            .distinct()
+        )
+        with_others = set((await self._session.execute(others)).scalars())
+        sole = [pid for pid in candidates if pid not in with_others]
+        return sole, [pid for pid in candidates if pid in with_others]
+
+    async def delete_many(self, patient_ids: list[uuid.UUID]) -> None:
+        """Borra pacientes; la base de datos elimina todo su contenido (FK en cascada)."""
+        if patient_ids:
+            await self._session.execute(delete(Patient).where(Patient.id.in_(patient_ids)))
 
 
 class CareLinkRepository:

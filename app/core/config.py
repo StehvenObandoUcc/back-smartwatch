@@ -120,6 +120,7 @@ class Settings(BaseSettings):
     rate_chat_user: RateLimit = RateLimit(limit=10, window_seconds=60)
     # Tope general para cualquier petición autenticada (usuario o reloj), además de los específicos.
     rate_principal: RateLimit = RateLimit(limit=300, window_seconds=60)
+    rate_delete_account_user: RateLimit = RateLimit(limit=5, window_seconds=900)
 
     @model_validator(mode="after")
     def _email_provider_is_usable(self) -> "Settings":

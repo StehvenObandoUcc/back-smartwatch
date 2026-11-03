@@ -65,19 +65,25 @@ class ConsentService:
         return _to_out(event, actor.display_name)
 
 
-def _to_out(event: ConsentEvent, actor_name: str) -> ConsentOut:
+def _to_out(event: ConsentEvent, actor_name: str | None) -> ConsentOut:
+    # Sin actor (su cuenta se borró) la decisión sigue vigente, pero ya no se sabe quién la tomó.
+    granted_by = (
+        ConsentActorOut(
+            user_id=event.actor_user_id, display_name=actor_name, on_behalf=event.on_behalf
+        )
+        if event.actor_user_id is not None and actor_name is not None
+        else None
+    )
     return ConsentOut(
         purpose=event.purpose,
         granted=event.granted,
         version=event.version,
         updated_at=event.created_at,
-        granted_by=ConsentActorOut(
-            user_id=event.actor_user_id, display_name=actor_name, on_behalf=event.on_behalf
-        ),
+        granted_by=granted_by,
     )
 
 
-def _to_list(rows: list[Row[ConsentEvent, str]]) -> ConsentListOut:
+def _to_list(rows: list[Row[ConsentEvent, str | None]]) -> ConsentListOut:
     """Siempre las tres finalidades; las no respondidas, sin conceder."""
     latest = {event.purpose: _to_out(event, name) for event, name in rows}
     return ConsentListOut(

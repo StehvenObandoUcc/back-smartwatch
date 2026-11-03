@@ -3,6 +3,7 @@ from typing import Annotated
 from fastapi import APIRouter, Cookie, Depends, Request, Response, status
 
 from app.core.auth import CurrentUserDep
+from app.core.cookies import REFRESH_COOKIE, REFRESH_COOKIE_PATH, clear_refresh_cookie
 from app.core.deps import (
     AccessTokensDep,
     ClientIpDep,
@@ -25,9 +26,6 @@ from app.modules.auth.schemas import (
 from app.modules.auth.service import AuthService
 
 router = APIRouter(prefix="/auth", tags=["auth"])
-
-REFRESH_COOKIE = "__Secure-refresh-token"
-REFRESH_COOKIE_PATH = "/auth"
 
 # Sin max_length: una cookie anómala es una sesión inválida (401), no un 422.
 RefreshCookie = Annotated[str | None, Cookie(alias=REFRESH_COOKIE)]
@@ -63,12 +61,6 @@ def _set_refresh_cookie(response: Response, token: str, max_age: int) -> None:
         secure=True,
         httponly=True,
         samesite="strict",
-    )
-
-
-def _clear_refresh_cookie(response: Response) -> None:
-    response.delete_cookie(
-        REFRESH_COOKIE, path=REFRESH_COOKIE_PATH, secure=True, httponly=True, samesite="strict"
     )
 
 
@@ -126,7 +118,7 @@ async def refresh(
     except UnauthorizedError as exc:
         # Sin sesión válida: además del 401, se borra la cookie.
         problem = problem_from(exc, instance_of(request))
-        _clear_refresh_cookie(problem)
+        clear_refresh_cookie(problem)
         return problem
     _set_refresh_cookie(response, result.refresh_token, settings.user_refresh_ttl_days * 86400)
     return result.body
@@ -141,7 +133,7 @@ async def refresh(
 async def logout(service: AuthServiceDep, refresh_token: RefreshCookie = None) -> Response:
     await service.logout(refresh_token)
     response = Response(status_code=status.HTTP_204_NO_CONTENT)
-    _clear_refresh_cookie(response)
+    clear_refresh_cookie(response)
     return response
 
 

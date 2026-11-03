@@ -23,3 +23,7 @@ class UserRepository:
 
     def add(self, user: User) -> None:
         self._session.add(user)
+
+    async def delete(self, user: User) -> None:
+        """Borra al usuario; la base de datos se encarga de lo que depende de él (FK)."""
+        await self._session.delete(user)

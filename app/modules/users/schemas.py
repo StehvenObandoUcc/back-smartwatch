@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 from typing import Literal, Self
 
-from pydantic import model_validator
+from pydantic import Field, model_validator
 
 from app.core.schemas import ApiModel, DisplayName, Timezone, require_partial_update
 
@@ -30,3 +30,7 @@ class UserUpdate(ApiModel):
     @model_validator(mode="after")
     def _at_least_one(self) -> Self:
         return require_partial_update(self)
+
+
+class DeleteAccountRequest(ApiModel):
+    password: str = Field(min_length=1, max_length=128)

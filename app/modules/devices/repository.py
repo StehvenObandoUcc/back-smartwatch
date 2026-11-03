@@ -17,6 +17,15 @@ class DeviceRepository:
     async def get(self, device_id: uuid.UUID) -> Device | None:
         return await self._session.get(Device, device_id)
 
+    async def ids_for_patients(self, patient_ids: list[uuid.UUID]) -> list[uuid.UUID]:
+        """Ids de todos los relojes (también los revocados) de esos pacientes."""
+        if not patient_ids:
+            return []
+        result = await self._session.execute(
+            select(Device.id).where(Device.patient_id.in_(patient_ids))
+        )
+        return list(result.scalars())
+
     async def get_active(self, device_id: uuid.UUID) -> Device | None:
         result = await self._session.execute(
             select(Device).where(Device.id == device_id, Device.revoked_at.is_(None))

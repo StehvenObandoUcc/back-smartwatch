@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: API de recordatorios de medicamentos
-  version: 0.10.0
+  version: 0.11.0
   x-closed-phase: 3
   description: |
     Contrato de la API. Fuente de verdad del backend y de los clientes generados por el frontend
@@ -298,6 +298,49 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "422":
           $ref: "#/components/responses/ValidationError"
+    delete:
+      tags: [users]
+      operationId: deleteMe
+      x-phase: 3
+      summary: Eliminar la cuenta
+      description: |
+        Derecho de supresión (Ley 1581 de 2012). Exige la contraseña actual en el cuerpo y es
+        **irreversible**: todo ocurre en una sola transacción.
+        - Se borra la cuenta, sus sesiones, su vinculación de Telegram y sus preferencias.
+        - Si es un paciente con cuenta, se borra su registro de paciente con todo su contenido
+          (medicamentos, horarios, tomas, reportes, relojes, vínculos y consentimientos).
+        - Si es cuidador, cada paciente gestionado donde es el **único** cuidador activo se borra
+          con todo su contenido; si hay otros cuidadores activos, el paciente se conserva y solo
+          desaparece el vínculo de este usuario.
+        - Se borra el uso del chat y los mensajes de notificación aún sin enviar dirigidos a su
+          correo o a su chat de Telegram.
+        - Los consentimientos que otros conservan (p. ej. los que dio en nombre de un paciente
+          gestionado que sigue existiendo) se mantienen, con `grantedBy: null`.
+        - Los tokens de acceso ya emitidos caducan solos (15 min) y dejan de servir: el usuario
+          ya no existe (401 `invalid_token`). Los refresh tokens y los relojes quedan invalidados.
+        Responde 403 `invalid_password` (no 401, para que el cliente web no intente renovar la
+        sesión) si la contraseña no es correcta. Límite de intentos por usuario: 429 con
+        `Retry-After`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DeleteAccountRequest"
+      responses:
+        "204":
+          description: Cuenta eliminada.
+          headers:
+            Set-Cookie:
+              $ref: "#/components/headers/ClearRefreshCookie"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /users/me/consents:
     get:
       tags: [users]
@@ -2271,6 +2314,16 @@ components:
           $ref: "#/components/schemas/Timezone"
         locale:
           $ref: "#/components/schemas/Locale"
+    DeleteAccountRequest:
+      type: object
+      required: [password]
+      properties:
+        password:
+          type: string
+          format: password
+          description: Contraseña actual de la cuenta.
+          minLength: 1
+          maxLength: 128
     ConsentPurpose:
       type: string
       enum: [health_data, ai_chat, notifications]
@@ -2295,7 +2348,8 @@ components:
         grantedBy:
           description: |
             Quién tomó la última decisión: el propio titular o, en un paciente gestionado, el
-            cuidador que decidió en su nombre. Null si nunca se ha respondido.
+            cuidador que decidió en su nombre. Null si nunca se ha respondido o si quien decidió ya
+            eliminó su cuenta (la decisión se conserva como prueba de consentimiento).
           oneOf:
             - $ref: "#/components/schemas/ConsentActor"
             - type: "null"
