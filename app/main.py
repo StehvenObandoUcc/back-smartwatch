@@ -6,6 +6,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from redis.asyncio import Redis
 
+from app.core.audit import AuditMiddleware
 from app.core.config import Settings, get_settings
 from app.core.db import create_engine, create_session_factory
 from app.core.errors import register_error_handlers
@@ -74,6 +75,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         allow_headers=["Authorization", "Content-Type", "X-Request-ID"],
         expose_headers=["Retry-After", "X-Request-ID", "ETag"],
     )
+    if settings.audit_enabled:
+        # Antes que RequestContextMiddleware: queda dentro de él y ve el `request_id`.
+        app.add_middleware(AuditMiddleware)
     app.add_middleware(RequestContextMiddleware)
     app.add_middleware(SecurityHeadersMiddleware)
     register_error_handlers(app)
