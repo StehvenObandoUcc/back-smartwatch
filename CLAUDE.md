@@ -43,6 +43,7 @@ Python 3.13, uv, FastAPI, Pydantic v2, SQLAlchemy 2 async + asyncpg, Alembic, Re
 - Nunca registres en logs datos de salud ni tokens. Al chat IA no se envía nombre, documento ni contacto.
 - Consentimientos (`health_data`, `ai_chat`, `notifications`) se comprueban antes de procesar.
 - Derecho de supresión: `DELETE /users/me` borra la cuenta y sus datos de salud en una transacción (ADR 0011). Si añades tablas con datos del usuario, decide en esa ruta qué pasa con ellas.
+- Cada acceso con éxito a datos de salud queda en `health_data_access_log` (middleware, ADR 0012); no hace falta registrarlo en los servicios.
 
 ## Pruebas (plan exprés)
 - En local solo `ruff check`, `ruff format --check`, `mypy --strict` y `pytest tests/unit`. Las de integración (Testcontainers) corren en CI.
