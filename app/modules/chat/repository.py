@@ -1,7 +1,7 @@
 import uuid
 from datetime import date
 
-from sqlalchemy import func, select, update
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -53,3 +53,10 @@ class ChatUsageRepository:
                 output_tokens=ChatUsage.output_tokens + output_tokens,
             )
         )
+
+    async def delete_for_principals(self, principal_ids: list[uuid.UUID]) -> None:
+        """Borra el uso de esos usuarios o relojes (borrado de cuenta)."""
+        if principal_ids:
+            await self._session.execute(
+                delete(ChatUsage).where(ChatUsage.principal_id.in_(principal_ids))
+            )

@@ -13,8 +13,11 @@ class ConsentRepository:
 
     async def latest(
         self, *, user_id: uuid.UUID | None = None, patient_id: uuid.UUID | None = None
-    ) -> list[Row[ConsentEvent, str]]:
-        """Última decisión de cada finalidad de un titular, con el nombre de quien la tomó."""
+    ) -> list[Row[ConsentEvent, str | None]]:
+        """Última decisión de cada finalidad de un titular, con el nombre de quien la tomó.
+
+        El nombre es None si quien decidió borró su cuenta (la decisión se conserva).
+        """
         subject = (
             ConsentEvent.subject_user_id == user_id
             if user_id is not None
@@ -22,7 +25,7 @@ class ConsentRepository:
         )
         stmt = (
             select(ConsentEvent, User.display_name)
-            .join(User, User.id == ConsentEvent.actor_user_id)
+            .outerjoin(User, User.id == ConsentEvent.actor_user_id)
             .where(subject)
             .order_by(ConsentEvent.purpose, ConsentEvent.created_at.desc())
             .distinct(ConsentEvent.purpose)

@@ -1,7 +1,7 @@
 import uuid
 from typing import Any
 
-from sqlalchemy import delete, or_, select
+from sqlalchemy import and_, delete, func, or_, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -23,6 +23,30 @@ class OutboxRepository:
             .returning(OutboxMessage.id)
         )
         return (await self._session.execute(stmt)).first() is not None
+
+    async def delete_unsent_for(self, *, email: str, chat_id: int | None) -> int:
+        """Borra los mensajes sin enviar (`pending` o `failed`) dirigidos a ese correo o chat.
+
+        Los `sent` ya no llevan datos (el worker limpia el payload al enviarlos). No hace commit.
+        """
+        recipient = and_(
+            OutboxMessage.channel == "email",
+            func.lower(OutboxMessage.payload["to"].astext) == email.lower(),
+        )
+        if chat_id is not None:
+            recipient = or_(
+                recipient,
+                and_(
+                    OutboxMessage.channel == "telegram",
+                    OutboxMessage.payload["chat_id"].astext == str(chat_id),
+                ),
+            )
+        result = await self._session.execute(
+            delete(OutboxMessage)
+            .where(OutboxMessage.status.in_(("pending", "failed")), recipient)
+            .returning(OutboxMessage.id)
+        )
+        return len(result.all())
 
 
 class TelegramLinkRepository:
