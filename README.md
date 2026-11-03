@@ -121,7 +121,7 @@ Endpoints principales:
 | --- | --- |
 | Salud | `GET /health`, `GET /health/ready` |
 | Auth | `POST /auth/register`, `/auth/login`, `/auth/refresh`, `/auth/logout`, `/auth/verify-email`, `/auth/forgot-password`, `/auth/reset-password` |
-| Usuarios | `GET/PATCH /users/me`, `/users/me/consents`, `/users/me/notification-channels`, `/users/me/notification-preferences` |
+| Usuarios | `GET/PATCH/DELETE /users/me` (el borrado exige la contraseña), `/users/me/consents`, `/users/me/notification-channels`, `/users/me/notification-preferences` |
 | Pacientes | `GET/POST /patients`, `GET/PATCH /patients/{patientId}`, cuidadores e invitaciones |
 | Reloj | `POST /devices/pairing-codes`, `POST /devices/pairing-codes/{code}/confirm`, `POST /devices/token`, `PUT /devices/me/push-token` |
 | Medicamentos | `/patients/{patientId}/medications` y sus `/schedules` |
