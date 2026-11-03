@@ -33,5 +33,8 @@ class ConsentEvent(UuidPk, CreatedAt, Base):
     purpose: Mapped[str] = mapped_column(String(32))
     granted: Mapped[bool]
     version: Mapped[str] = mapped_column(String(32))
-    actor_user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    # Null si quien decidió borró su cuenta: la decisión se conserva como prueba de consentimiento.
+    actor_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL")
+    )
     on_behalf: Mapped[bool] = mapped_column(default=False)

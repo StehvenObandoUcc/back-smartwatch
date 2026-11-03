@@ -19,8 +19,9 @@ class Patient(UuidPk, CreatedAt, Base):
     owner_user_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("users.id", ondelete="CASCADE"), unique=True
     )
-    created_by_user_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("users.id", ondelete="CASCADE")
+    # Null si quien lo creó borró su cuenta y el paciente gestionado se conservó (otros cuidadores).
+    created_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL")
     )
     updated_at: Mapped[datetime] = mapped_column(server_default=func.now(), onupdate=func.now())
     # Sube con cada cambio de medicamentos u horarios; es la `version` del plan y base del ETag.
