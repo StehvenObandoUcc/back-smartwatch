@@ -5,6 +5,7 @@ from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import create_async_engine
 
 # Cada módulo registra aquí sus modelos para que autogenerate los vea.
+import app.modules.audit.models
 import app.modules.auth.models
 import app.modules.chat.models
 import app.modules.consents.models

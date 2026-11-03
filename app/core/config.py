@@ -96,6 +96,9 @@ class Settings(BaseSettings):
     argon2_memory_cost_kib: int = 65536
     argon2_parallelism: int = 4
 
+    # Registro de accesos a datos de salud (ADR 0012)
+    audit_enabled: bool = True
+
     # Límites de peticiones
     # Proxies de confianza delante de la API que añaden su entrada a `X-Forwarded-For`: 0 en
     # local (se usa la IP de la conexión), 1 con Heroku, 2 con Vercel + Heroku.

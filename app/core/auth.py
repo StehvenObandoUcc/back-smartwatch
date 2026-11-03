@@ -3,7 +3,7 @@
 import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import Depends, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -16,6 +16,18 @@ from app.core.security import AccessClaims, InvalidTokenError, TokenType
 _bearer = HTTPBearer(auto_error=False)
 
 BearerDep = Annotated[HTTPAuthorizationCredentials | None, Depends(_bearer)]
+
+
+@dataclass(frozen=True, slots=True)
+class Principal:
+    """Quién hizo la petición, para el registro de accesos (`request.state.principal`).
+
+    `patient_id` solo lo trae el reloj (el paciente vinculado de su token).
+    """
+
+    kind: Literal["user", "device"]
+    id: uuid.UUID
+    patient_id: uuid.UUID | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -59,6 +71,7 @@ async def current_user(
     claims = _claims(credentials, tokens)
     if claims.token_type is not TokenType.USER or claims.role is None:
         raise ForbiddenError("wrong_token_type", "Esta ruta requiere una sesión de usuario.")
+    request.state.principal = Principal(kind="user", id=claims.subject)
     await _count_principal(request, claims.subject)
     return CurrentUser(id=claims.subject, role=claims.role)
 
@@ -72,6 +85,9 @@ async def current_device(
     check: DeviceActiveCheck | None = getattr(request.app.state, "device_active_check", None)
     if check is not None and not await check(request, claims.subject):
         raise UnauthorizedError("device_unpaired", "El reloj ya no está vinculado.")
+    request.state.principal = Principal(
+        kind="device", id=claims.subject, patient_id=claims.patient_id
+    )
     await _count_principal(request, claims.subject)
     return CurrentDevice(id=claims.subject, patient_id=claims.patient_id)
 
