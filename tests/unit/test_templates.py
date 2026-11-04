@@ -59,3 +59,48 @@ def test_parse_update_accepts_private_text_messages_only() -> None:
         is None
     )
     assert parse_update({"update_id": 1}) is None
+
+
+_REPORT = {
+    "patient_name": "Ana",
+    "link": "https://web.example/r",
+    "percentage": 85.0,
+    "taken": 17,
+    "skipped": 1,
+    "missed": 2,
+    "period_start": "2026-10-26",
+    "period_end": "2026-11-01",
+    "local_time": "08:00",
+}
+
+
+@pytest.mark.parametrize(
+    ("locale", "subject", "phrase"),
+    [
+        ("en", "Weekly report for Ana", "Adherence: 85.0%"),
+        ("es", "Reporte semanal de Ana", "Adherencia: 85,0 %"),
+        (None, "Reporte semanal de Ana", "Adherencia: 85,0 %"),
+    ],
+)
+def test_weekly_report_follows_the_recipient_language(
+    locale: str | None, subject: str, phrase: str
+) -> None:
+    rendered_subject, body = render_email("weekly_report", {**_REPORT, "locale": locale})
+
+    assert rendered_subject == subject
+    assert phrase in body
+    assert phrase.split(": ")[1] in render_telegram("weekly_report", {**_REPORT, "locale": locale})
+
+
+@pytest.mark.parametrize(
+    ("kind", "english", "spanish"),
+    [
+        ("verify_email", "Confirm your email", "Confirma tu correo"),
+        ("reset_password", "Reset your password", "Recupera tu contraseña"),
+        ("missed_dose", "Unrecorded dose for Ana", "Dosis sin registrar de Ana"),
+    ],
+)
+def test_email_templates_have_an_english_version(kind: str, english: str, spanish: str) -> None:
+    assert render_email(kind, {**_REPORT, "locale": "en"})[0] == english
+    assert render_email(kind, {**_REPORT, "locale": "es"})[0] == spanish
+    assert render_telegram("missed_dose", {**_REPORT, "locale": "en"}).startswith("Alert:")

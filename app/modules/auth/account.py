@@ -56,7 +56,7 @@ class AccountService:
         await self._outbox.enqueue(
             channel="email",
             kind=purpose,
-            payload={"to": user.email, "link": link},
+            payload={"to": user.email, "link": link, "locale": user.locale},
             dedupe_key=f"{purpose}:{row.id}",
         )
 
