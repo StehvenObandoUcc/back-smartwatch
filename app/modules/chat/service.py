@@ -5,8 +5,9 @@ Orden de las comprobaciones: sesión → acceso al paciente (404) → consentimi
 proveedor devuelve el mensaje reservado. Del texto de la conversación no se guarda ni se registra
 nada: solo contadores de mensajes y tokens.
 
-En el reloj el modelo puede proponer un medicamento nuevo (herramienta `create_medication`): se
-guarda en Redis 10 minutos y solo se crea cuando el reloj lo confirma con `confirmActionId`.
+En el reloj el modelo puede proponer un medicamento nuevo (`create_medication`) o un horario más
+para uno que ya existe (`add_schedule`): la propuesta se guarda en Redis 10 minutos y solo se crea
+cuando el reloj la confirma con `confirmActionId`.
 """
 
 import asyncio
@@ -28,10 +29,14 @@ from app.core.logging import get_logger
 from app.core.rate_limit import RateLimiter
 from app.core.security import utcnow
 from app.modules.chat.prompt import (
+    ADD_SCHEDULE_TOOL,
     CREATE_MEDICATION_TOOL,
+    MAX_MEDICATIONS_IN_CONTEXT,
     PromptDose,
+    PromptMedication,
     build_system_prompt,
     describe_medication,
+    describe_schedule,
     shorten_for_watch,
 )
 from app.modules.chat.provider import (
@@ -48,11 +53,14 @@ from app.modules.chat.schemas import (
     ChatRequest,
     MedicationDraft,
     PendingAction,
+    ScheduleDraft,
+    ScheduleProposal,
     WatchChatReply,
     WatchChatRequest,
 )
 from app.modules.consents.service import ConsentService
 from app.modules.doses.loader import load_history
+from app.modules.medications.repository import MedicationRepository
 from app.modules.medications.schemas import DeviceMedicationCreate, ScheduleCreate
 from app.modules.medications.service import MedicationService
 from app.modules.patients.models import Patient
@@ -109,6 +117,7 @@ class ChatService:
         self._patients = PatientService(session)
         self._consents = ConsentService(session)
         self._plan = PlanRepository(session)
+        self._medications = MedicationRepository(session)
         self._usage = ChatUsageRepository(session)
 
     # ─── Pasos comunes ────────────────────────────────────────────────────────
@@ -143,7 +152,18 @@ class ChatService:
             ),
             key=lambda d: d.at.astimezone(UTC),
         )
-        return build_system_prompt(now.astimezone(tz), doses, short=short)
+        medications = [
+            PromptMedication(
+                medication.id,
+                medication.name,
+                medication.dosage,
+                [(s.times, s.days_of_week) for s in schedules],
+            )
+            for medication, schedules in await self._medications.active_with_schedules(
+                patient.id, today, MAX_MEDICATIONS_IN_CONTEXT
+            )
+        ]
+        return build_system_prompt(now.astimezone(tz), doses, short=short, medications=medications)
 
     async def _reserve(
         self, principal_id: uuid.UUID, patient: Patient, now: datetime
@@ -260,7 +280,7 @@ class ChatService:
                 system,
                 turns,
                 max_tokens=self._settings.chat_watch_max_tokens,
-                tools=[CREATE_MEDICATION_TOOL],
+                tools=[CREATE_MEDICATION_TOOL, ADD_SCHEDULE_TOOL],
             ):
                 if event.text:
                     text.append(event.text)
@@ -273,13 +293,18 @@ class ChatService:
             await self._release(device.id, day)
             raise ChatUnavailableError from None
         pending: PendingAction | None = None
-        draft = _draft(calls)
-        if draft is not None:
-            pending = await self._propose(device.id, patient, draft, now)
-            reply = f"Voy a agregar {pending.summary}. ¿Lo confirmas?"
-        elif calls:  # pidió crear algo, pero con datos que no pasan la validación
-            reply = "No entendí bien el medicamento. Dime el nombre, la dosis y la hora."
-        else:
+        for draft in _drafts(calls):
+            if isinstance(draft, MedicationDraft):
+                pending = await self._propose(device.id, patient, draft, now)
+                reply = f"Voy a agregar {pending.summary}. ¿Lo confirmas?"
+                break
+            pending = await self._propose_schedule(device.id, patient, draft, now)
+            if pending is not None:
+                reply = f"{pending.summary}. ¿Lo confirmas?"
+                break
+        if pending is None and calls:  # pidió agregar algo, pero los datos no son válidos
+            reply = "No entendí bien el medicamento o la hora. ¿Me lo repites?"
+        elif pending is None:
             reply = shorten_for_watch("".join(text))
         if not reply:
             await self._release(device.id, day)
@@ -319,15 +344,86 @@ class ChatService:
             raise NotFoundError(
                 "chat_action_not_found", "La propuesta caducó o no existe. Pídela de nuevo."
             )
-        create = DeviceMedicationCreate.model_validate_json(raw)
-        created, _ = await MedicationService(self._session).create_from_device(patient.id, create)
         used = await self._usage.messages(device_id, local_today(ZoneInfo(patient.timezone), now))
+        remaining = max(self._settings.chat_daily_messages - used, 0)
+        stored = json.loads(raw)
+        if stored.get("type") == "add_schedule":
+            return await self._confirm_schedule(
+                device_id, patient, action_id, ScheduleProposal.model_validate(stored), remaining
+            )
+        create = DeviceMedicationCreate.model_validate(stored)
+        created, _ = await MedicationService(self._session).create_from_device(patient.id, create)
         return WatchChatReply(
             reply=f"Listo, agregué {_summary(create)}.",
-            remaining_messages=max(self._settings.chat_daily_messages - used, 0),
+            remaining_messages=remaining,
             actions=[
                 ChatAction(medication_id=created.medication.id, schedule_id=created.schedule.id)
             ],
+        )
+
+    async def _propose_schedule(
+        self, device_id: uuid.UUID, patient: Patient, draft: ScheduleDraft, now: datetime
+    ) -> PendingAction | None:
+        """Como `_propose`, para un medicamento que ya existe. Si no es del paciente o está
+        archivado, la llamada se ignora (None)."""
+        medication = await self._medications.get(patient.id, draft.medication_id)
+        if medication is None or medication.archived_at is not None:
+            return None
+        action_id = uuid.uuid4()
+        proposal = ScheduleProposal(
+            medication_id=medication.id,
+            schedule=ScheduleCreate(
+                times=draft.times,
+                days_of_week=draft.days_of_week,
+                start_date=local_today(ZoneInfo(patient.timezone), now),
+            ),
+            description=describe_schedule(
+                medication.name, medication.dosage, draft.times, draft.days_of_week
+            ),
+        )
+        await self._save(device_id, action_id, proposal, PENDING_ACTION_TTL_SECONDS)
+        return PendingAction(
+            id=action_id, type="add_schedule", summary=f"Agregar {proposal.description}"
+        )
+
+    async def _confirm_schedule(
+        self,
+        device_id: uuid.UUID,
+        patient: Patient,
+        action_id: uuid.UUID,
+        proposal: ScheduleProposal,
+        remaining: int,
+    ) -> WatchChatReply:
+        schedule_id = proposal.schedule_id
+        if schedule_id is None:
+            # ponytail: dos confirmaciones simultáneas de la misma propuesta crearían dos
+            # horarios; el reloj confirma una vez y reintenta en serie. Con un SET NX de
+            # «en curso» se cerraría si hiciera falta.
+            schedule = await MedicationService(self._session).add_schedule_from_device(
+                patient.id, proposal.medication_id, proposal.schedule
+            )
+            schedule_id = schedule.id
+            # Lo confirmado se queda el resto de los 10 minutos: reintentar no duplica.
+            ttl = await self._redis.ttl(_action_key(device_id, action_id))
+            done = proposal.model_copy(update={"schedule_id": schedule_id})
+            await self._save(device_id, action_id, done, max(ttl, 1))
+        return WatchChatReply(
+            reply=f"Listo, agregué {proposal.description}.",
+            remaining_messages=remaining,
+            actions=[
+                ChatAction(
+                    type="schedule_added",
+                    medication_id=proposal.medication_id,
+                    schedule_id=schedule_id,
+                )
+            ],
+        )
+
+    async def _save(
+        self, device_id: uuid.UUID, action_id: uuid.UUID, proposal: ScheduleProposal, ttl: int
+    ) -> None:
+        await self._redis.set(
+            _action_key(device_id, action_id), proposal.model_dump_json(by_alias=True), ex=ttl
         )
 
 
@@ -336,16 +432,22 @@ def _action_key(device_id: uuid.UUID, action_id: uuid.UUID) -> str:
     return f"chat:action:{device_id}:{action_id}"
 
 
-def _draft(calls: list[ToolCall]) -> MedicationDraft | None:
-    """La primera llamada a create_medication con argumentos válidos; las demás se ignoran."""
+def _drafts(calls: list[ToolCall]) -> list[MedicationDraft | ScheduleDraft]:
+    """Las llamadas con argumentos válidos, en orden; las demás se ignoran."""
+    models: dict[str, type[MedicationDraft] | type[ScheduleDraft]] = {
+        "create_medication": MedicationDraft,
+        "add_schedule": ScheduleDraft,
+    }
+    drafts: list[MedicationDraft | ScheduleDraft] = []
     for call in calls:
-        if call.name != "create_medication":
+        model = models.get(call.name)
+        if model is None:
             continue
         try:
-            return MedicationDraft.model_validate_json(call.arguments)
+            drafts.append(model.model_validate_json(call.arguments))
         except ValidationError:
-            return None
-    return None
+            continue
+    return drafts
 
 
 def _summary(create: DeviceMedicationCreate) -> str:
