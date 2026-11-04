@@ -404,3 +404,28 @@ async def test_deepseek_without_tools_does_not_send_them() -> None:
 
     assert "tools" not in json.loads(seen[0].content)
     await provider.aclose()
+
+
+def test_the_assistant_answers_in_the_user_language() -> None:
+    for short in (True, False):
+        system = build_system_prompt(datetime(2026, 11, 4, 9, 0), [], short=short)
+        assert "mismo idioma en que te escribe el usuario (español o inglés)" in system
+
+
+def test_summaries_follow_the_account_language() -> None:
+    every_day = [1, 2, 3, 4, 5, 6, 7]
+    assert (
+        describe_schedule("Metformin", "850 mg", ["14:00"], every_day, "en")
+        == "2 PM to Metformin 850 mg every day"
+    )
+    assert (
+        describe_medication("Losartan", "50 mg", ["08:00", "20:30"], [1, 5], "en")
+        == "Losartan 50 mg at 8 AM and 8:30 PM on Mondays and Fridays"
+    )
+    assert (
+        describe_medication("Losartán", "50 mg", ["00:15"], every_day, "en")
+        == "Losartán 50 mg at 12:15 AM every day"
+    )
+    assert describe_schedule("Metformina", "850 mg", ["14:00"], every_day, "es") == (
+        "a Metformina 850 mg las 14:00 todos los días"
+    )

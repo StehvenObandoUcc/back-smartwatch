@@ -760,3 +760,30 @@ async def test_fake_model_adds_a_schedule_end_to_end(app_factory: AppFactory) ->
         assert confirmed.json()["actions"][0]["type"] == "schedule_added"
         [schedule] = await _schedules(client, owner, patient_id, medication["id"])
         assert schedule["times"] == ["14:00"]
+
+
+async def test_watch_texts_follow_the_account_language(
+    chat: tuple[AsyncClient, ScriptedProvider],
+) -> None:
+    client, provider = chat
+    owner, patient_id = await _patient(client)
+    await client.patch("/users/me", headers=bearer(owner), json={"locale": "en"})
+    medication = await _medication(client, owner, patient_id, name="Metformin", dosage="850 mg")
+    watch = await _watch(client, owner, patient_id)
+    provider.chunks = []
+    provider.tool_calls = [_add_schedule(medication["id"], ["14:00"])]
+
+    proposal = await _ask_watch(client, watch, message="Add 2 PM to my metformin")
+
+    pending = proposal.json()["pendingAction"]
+    assert pending["summary"] == "Add 2 PM to Metformin 850 mg every day"
+    assert proposal.json()["reply"] == "Add 2 PM to Metformin 850 mg every day. Do you confirm?"
+    confirmed = await _confirm(client, watch, pending["id"])
+    assert confirmed.json()["reply"] == "Done, I added 2 PM to Metformin 850 mg every day."
+
+    provider.tool_calls = [LOSARTAN]
+    created = await _ask_watch(client, watch, message="Add Losartan 50 mg at 8 AM")
+    assert created.json()["pendingAction"]["summary"].endswith("at 8 AM every day")
+    assert created.json()["reply"].startswith("I'll add ")
+    done = await _confirm(client, watch, created.json()["pendingAction"]["id"])
+    assert done.json()["reply"].startswith("Done, I added ")
