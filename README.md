@@ -1,263 +1,240 @@
 <div align="center">
 
-# back-smartwatch
+# Recuerda · back-smartwatch
 
-**API REST de recordatorios de medicamentos para un reloj Wear OS y un panel web.**
+**API de recordatorios de medicamentos para un reloj Wear OS y un panel web.**
 
 ![Python](https://img.shields.io/badge/Python-3.13-3776AB?logo=python&logoColor=white)
-![FastAPI](https://img.shields.io/badge/FastAPI-0.142-009688?logo=fastapi&logoColor=white)
+![FastAPI](https://img.shields.io/badge/FastAPI-async-009688?logo=fastapi&logoColor=white)
 ![PostgreSQL](https://img.shields.io/badge/PostgreSQL-17-4169E1?logo=postgresql&logoColor=white)
 ![Redis](https://img.shields.io/badge/Redis-7-DC382D?logo=redis&logoColor=white)
-![SQLAlchemy](https://img.shields.io/badge/SQLAlchemy-2.1_async-D71F00)
-![Docker](https://img.shields.io/badge/Docker_Compose-dev-2496ED?logo=docker&logoColor=white)
-![OpenAPI](https://img.shields.io/badge/OpenAPI-0.5.0-6BA539?logo=openapiinitiative&logoColor=white)
+![OpenAPI](https://img.shields.io/badge/OpenAPI-0.13.0-6BA539?logo=openapiinitiative&logoColor=white)
 
 </div>
 
-## Tabla de contenido
+## Contenido
 
-1. [Acerca del proyecto](#acerca-del-proyecto)
-2. [Características principales](#características-principales)
-3. [Stack tecnológico](#stack-tecnológico)
-4. [Arquitectura y cómo funciona](#arquitectura-y-cómo-funciona)
-5. [Relación con el frontend](#relación-con-el-frontend)
-6. [Instalación y ejecución](#instalación-y-ejecución)
-7. [Calidad y pruebas](#calidad-y-pruebas)
-8. [Estructura de carpetas](#estructura-de-carpetas)
-9. [Cómo contribuir](#cómo-contribuir)
-10. [Licencia](#licencia)
+1. [Qué es](#qué-es)
+2. [Cómo está compuesto](#cómo-está-compuesto)
+3. [Cómo funciona](#cómo-funciona)
+4. [La API](#la-api)
+5. [Estructura del código](#estructura-del-código)
+6. [Ejecutar en local](#ejecutar-en-local)
+7. [Pruebas y CI](#pruebas-y-ci)
+8. [Despliegue](#despliegue)
 
-## Acerca del proyecto
+## Qué es
 
-`back-smartwatch` es el backend de un sistema de recordatorios de medicamentos pensado para personas que necesitan tomar medicación a sus horas y para los cuidadores que las acompañan. El producto tiene dos clientes, ambos en el repositorio [`front-smartwatch`](https://github.com/StehvenObandoUcc/front-smartwatch):
+Recuerda ayuda a una persona a tomar su medicación a tiempo y permite que sus cuidadores lo sigan. Tiene tres partes:
 
-- Un **reloj Wear OS independiente** (sin app de teléfono) que alarma a cada hora de toma y registra si la dosis fue tomada, pospuesta u omitida.
-- Un **panel web** donde el paciente o su cuidador carga medicamentos y horarios, consulta la adherencia, descarga reportes y gestiona notificaciones.
-
-La API centraliza cuentas, pacientes, medicamentos, el plan de dosis, el historial de tomas, las alertas (correo y Telegram), los reportes en PDF y un asistente conversacional con IA.
-
-El contrato [`contracts/openapi.yaml`](contracts/openapi.yaml) es la fuente de verdad: de él se generan los clientes del frontend.
-
-## Características principales
-
-- **Cuentas y sesiones**: registro, inicio de sesión, refresh de token rotativo y revocable, verificación de correo y recuperación de contraseña. Roles paciente y cuidador.
-- **Pacientes y cuidadores**: un cuidador gestiona pacientes mediante vínculos e invitaciones; solo ve los pacientes vinculados y activos.
-- **Consentimientos** por finalidad que se comprueban antes de procesar datos.
-- **Vinculación del reloj sin teclado** mediante un código corto (flujo tipo *device code*).
-- **Medicamentos y horarios** con un plan de 7 días versionado y `ETag` (`304 Not Modified`) para el reloj.
-- **Eventos de toma idempotentes** enviados por lotes, historial paginado por cursor y adherencia.
-- **Notificaciones** por correo y Telegram mediante un patrón *outbox* entregado por un worker con reintentos.
-- **Alertas** de dosis omitida y **reportes** semanales o bajo demanda, con PDF.
-- **Chat con IA** con respuesta en streaming (SSE) para la web y respuesta corta para el reloj, con límite diario de mensajes.
-- Errores en formato RFC 9457 (`application/problem+json`), rate limit en login, registro y chat.
-
-## Stack tecnológico
-
-| Capa | Tecnología | Versión |
+| Parte | Repositorio | Qué hace |
 | --- | --- | --- |
-| Lenguaje | Python | 3.13 |
-| Framework web | FastAPI + Uvicorn | ≥ 0.142.2 / ≥ 0.54.0 |
-| Validación | Pydantic v2 + pydantic-settings | ≥ 2.13.5 / ≥ 2.15.0 |
-| Base de datos | PostgreSQL (asyncpg) | 17 |
-| ORM y migraciones | SQLAlchemy async + Alembic | ≥ 2.1.1 / ≥ 1.20.0 |
-| Caché, rate limit y colas | Redis + arq (worker) | 7 / ≥ 0.28.0 |
-| Seguridad | PyJWT + argon2-cffi | ≥ 2.15.1 / ≥ 25.1.0 |
-| Reportes | fpdf2 | ≥ 2.8.3 |
-| Cliente de IA | SDK `openai` (proveedor compatible) | ≥ 2.8.0 |
-| Logging | structlog | ≥ 26.1.0 |
-| Gestor de paquetes | uv | — |
-| Calidad | ruff, mypy (strict), pytest, Testcontainers, Schemathesis | — |
-| CI | GitHub Actions | — |
+| **Reloj Wear OS** | [front-smartwatch](https://github.com/StehvenObandoUcc/front-smartwatch) (`wear/`) | App independiente, sin app de teléfono. Suena a la hora de cada dosis, registra si se tomó, se pospuso o se omitió, y tiene un asistente por voz. Funciona sin conexión con el plan de 7 días descargado. |
+| **Panel web** | [front-smartwatch](https://github.com/StehvenObandoUcc/front-smartwatch) (`web/`) | El paciente o su cuidador carga medicamentos y horarios, vincula el reloj, consulta la adherencia, descarga reportes y configura los avisos. |
+| **Backend** | este repositorio | API REST que guarda todo, genera el plan de dosis, envía avisos por correo y Telegram, crea reportes PDF y conecta el asistente de IA. |
 
-## Arquitectura y cómo funciona
+La interfaz está en español o inglés, según el idioma de la cuenta (`locale`).
 
-El código se organiza por dominio en `app/modules/<dominio>/` con la cadena `router → service → repository`: los routers no tocan SQL y los servicios no conocen HTTP. Todo el I/O es asíncrono. Lo lento (correo, Telegram, PDF, alertas) nunca ocurre dentro de la petición: se encola en la tabla `notifications_outbox` o en una tarea y lo procesa el worker.
+## Cómo está compuesto
 
 ```mermaid
 flowchart LR
-    Reloj["Reloj Wear OS"] -->|REST + JWT de dispositivo| API
-    Web["Panel web"] -->|REST + JWT de usuario| API
-    API["API FastAPI<br/>router → service → repository"] --> PG[("PostgreSQL")]
+    Reloj["Reloj Wear OS"] -->|HTTPS + token del reloj| API
+    Web["Panel web"] -->|HTTPS + JWT y cookie de refresh| API
+    API["API FastAPI"] --> PG[("PostgreSQL")]
     API --> RD[("Redis")]
-    API -->|encola| OB[("notifications_outbox")]
+    API -->|chat| IA["DeepSeek"]
+    API -->|encola avisos| OB[("outbox en PostgreSQL")]
     OB --> W["Worker arq"]
-    RD --> W
-    W --> Mail["Correo"]
+    W --> Mail["Correo (Resend)"]
     W --> TG["Telegram"]
     W --> PDF["Reportes PDF"]
-    API -->|SSE / respuesta corta| IA["Proveedor de IA"]
 ```
 
-El worker ejecuta las tareas programadas: entrega del outbox (cada 15 s), alerta de dosis omitida (cada minuto), generación de reportes pendientes (cada 10 s) y creación del reporte semanal (cada hora; el lunes a las 08:00 locales de cada paciente). Si el worker está detenido, la API sigue funcionando y los avisos se acumulan.
+| Pieza | Tecnología | Para qué |
+| --- | --- | --- |
+| API | Python 3.13, FastAPI, Pydantic v2 | Endpoints REST, validación y errores `application/problem+json` (RFC 9457) |
+| Base de datos | PostgreSQL 17, SQLAlchemy 2 async, Alembic | Cuentas, pacientes, medicamentos, tomas, reportes, outbox y registro de accesos |
+| Redis | Redis 7 | Límites de peticiones, propuestas pendientes del asistente y cola del worker |
+| Worker | arq | Entrega de avisos, alertas de dosis omitida y reportes |
+| Asistente | DeepSeek con el SDK `openai` | Chat sobre el plan del paciente |
+| Seguridad | PyJWT, Argon2 | Tokens de acceso de 15 min, refresh rotativo y revocable, contraseñas con hash |
+| Reportes | fpdf2 | PDF del reporte semanal |
+| Dependencias | uv | Entorno y bloqueo de versiones (`uv.lock`) |
 
-### Flujo de punta a punta: registrar una toma
+## Cómo funciona
 
-1. En el panel web, el cuidador crea un paciente, le carga un medicamento con su horario y vincula el reloj confirmando el código que este muestra.
-2. El reloj descarga el plan con `GET /devices/me/plan` (usa `ETag`) y programa alarmas locales.
-3. A la hora de la dosis, el paciente pulsa *Tomada*, *Posponer* u *Omitir*. El reloj guarda el evento con un `eventId` UUID y lo envía en lote a `POST /devices/me/dose-events`.
-4. El backend valida que el horario sea del paciente del reloj y que `scheduledAt` sea un instante que ese horario genera, e inserta con `ON CONFLICT DO NOTHING`. Cada evento responde `created`, `duplicate` o `rejected`, por lo que reintentar es seguro.
-5. El panel web consulta `GET /patients/{patientId}/dose-history` y `GET /patients/{patientId}/adherence`. Las dosis sin evento con más de 60 minutos de retraso se calculan como `MISSED` al consultar.
+### 1. Cuentas, pacientes y cuidadores
 
-Las decisiones de diseño están documentadas en [`docs/adr/`](docs/adr).
+- Cada cuenta tiene un rol: **paciente** (tiene su propio registro de paciente) o **cuidador** (crea pacientes gestionados o se une a uno con una invitación).
+- Un cuidador solo ve los pacientes con los que tiene un vínculo activo.
+- Antes de procesar datos se comprueban los consentimientos: `health_data` (datos de salud), `ai_chat` (asistente) y `notifications` (avisos).
+- Cada acceso con éxito a datos de salud queda en un registro de accesos.
+- `DELETE /users/me` borra la cuenta y sus datos de salud en una sola transacción.
 
-## Relación con el frontend
+### 2. Vincular el reloj (sin teclado)
 
-Este repositorio se complementa con [**front-smartwatch**](https://github.com/StehvenObandoUcc/front-smartwatch), que contiene el reloj (`wear/`) y el panel web (`web/`).
+1. El reloj pide un código corto (`POST /devices/pairing-codes`) y lo muestra en pantalla.
+2. En el panel web, el usuario escribe ese código y elige el paciente (`POST /devices/pairing-codes/{code}/confirm`).
+3. El reloj consulta hasta recibir sus tokens (`POST /devices/token`). Desde ahí actúa en nombre de ese paciente.
 
-| Aspecto | Detalle |
+### 3. Medicamentos y plan de dosis
+
+- Un medicamento tiene uno o varios horarios: horas del día (`08:00`) × días de la semana, entre una fecha de inicio y otra opcional de fin.
+- El backend genera el **plan de 7 días** con la zona horaria del paciente. Cada cambio de medicamentos u horarios sube la versión del plan.
+- El reloj descarga el plan con `GET /devices/me/plan` usando `ETag`: si nada cambió, recibe `304` y no gasta datos.
+
+### 4. Registrar tomas
+
+1. A la hora de la dosis el reloj suena. El paciente pulsa *Tomada*, *Posponer* u *Omitir*.
+2. El reloj guarda el evento con un `eventId` propio y lo envía en lote (`POST /devices/me/dose-events`) cuando tiene conexión.
+3. El backend comprueba que la dosis exista en el plan. Reenviar el mismo evento no lo duplica: cada evento responde `created`, `duplicate` o `rejected`.
+4. Una dosis sin registrar más de 60 minutos después de su hora cuenta como **no registrada** (`MISSED`).
+5. Una toma se puede deshacer desde el reloj o desde la web, y la web también puede registrar tomas.
+
+La **adherencia** es tomadas ÷ (tomadas + omitidas + no registradas). Se consulta por rango de fechas.
+
+### 5. Avisos y reportes
+
+Nada lento se hace dentro de una petición. La API escribe el mensaje en la tabla **outbox** y el **worker** lo entrega con reintentos:
+
+| Tarea del worker | Cada cuánto |
 | --- | --- |
-| Protocolo | REST sobre HTTP, JSON en `camelCase`, fechas ISO 8601 con zona, IDs UUID |
-| Streaming | SSE en el chat de la web |
-| Contrato | [`contracts/openapi.yaml`](contracts/openapi.yaml); el frontend genera sus clientes (Orval para la web, openapi-generator para el reloj) y fija el commit del contrato en su `contract.lock` |
-| Autenticación web | JWT de acceso de 15 min en `Authorization: Bearer`; refresh token en cookie `httpOnly` (`/auth/refresh`) |
-| Autenticación del reloj | Vinculación por código y token de dispositivo (`/devices/token`) |
-| Errores | `application/problem+json` (RFC 9457) |
-| Paginación | Cursor: `?cursor=&limit=` → `{ items, nextCursor }` |
-| CORS | Solo el origen del panel web, con credenciales |
+| Entregar el outbox (correo y Telegram) | 15 s |
+| Buscar dosis no registradas y avisar a los cuidadores | 1 min |
+| Generar los PDF pendientes | 10 s |
+| Crear el reporte semanal | El lunes a las 08:00 de cada paciente |
 
-Endpoints principales:
+- **Correo**: verificación de cuenta, recuperación de contraseña, alertas y reportes.
+- **Telegram**: el usuario vincula su chat con el bot desde el panel y elige qué avisos recibir y por qué canal.
+- Los avisos salen en el idioma de quien los recibe.
 
-| Área | Endpoints |
+Si el worker está detenido, la API sigue funcionando y los avisos esperan en el outbox.
+
+### 6. Asistente con IA
+
+- **Web**: el asistente responde por *streaming* (SSE) sobre el plan del paciente.
+- **Reloj**: respuesta corta (máximo 40 palabras) para leerla en voz alta.
+  - El asistente puede **proponer** agregar un medicamento o una hora a uno que ya existe.
+  - Nada se crea hasta que el usuario lo confirma en el reloj.
+- **Reglas fijas del asistente**:
+  - No cambia dosis.
+  - No diagnostica.
+  - Responde en el idioma en que le escriben.
+  - Nunca recibe el nombre, documento ni datos de contacto del paciente.
+- Hay un límite diario de mensajes por usuario y por reloj.
+
+## La API
+
+El contrato [`contracts/openapi.yaml`](contracts/openapi.yaml) es la fuente de verdad. El frontend genera sus clientes a partir de él, y su sección «Cambios por versión» resume cada versión.
+
+- JSON en `camelCase`, fechas ISO 8601 con zona, identificadores UUID.
+- Errores `application/problem+json` con un `code` estable que el frontend traduce.
+- Paginación por cursor: `?cursor=&limit=` → `{ items, nextCursor }`.
+- Límites de peticiones en login, registro, chat y borrado de cuenta.
+
+| Área | Rutas |
 | --- | --- |
-| Salud | `GET /health`, `GET /health/ready` |
-| Auth | `POST /auth/register`, `/auth/login`, `/auth/refresh`, `/auth/logout`, `/auth/verify-email`, `/auth/forgot-password`, `/auth/reset-password` |
-| Usuarios | `GET/PATCH/DELETE /users/me` (el borrado exige la contraseña), `/users/me/consents`, `/users/me/notification-channels`, `/users/me/notification-preferences` |
-| Pacientes | `GET/POST /patients`, `GET/PATCH /patients/{patientId}`, cuidadores e invitaciones |
-| Reloj | `POST /devices/pairing-codes`, `POST /devices/pairing-codes/{code}/confirm`, `POST /devices/token`, `PUT /devices/me/push-token` |
+| Salud | `/health`, `/health/ready` |
+| Autenticación | `/auth/register`, `/auth/login`, `/auth/refresh`, `/auth/logout`, `/auth/verify-email`, `/auth/resend-verification`, `/auth/forgot-password`, `/auth/reset-password` |
+| Cuenta | `/users/me`, `/users/me/consents`, `/users/me/notification-channels`, `/users/me/notification-preferences` |
+| Pacientes | `/patients`, `/patients/{patientId}`, sus consentimientos, cuidadores e invitaciones (`/caregiver-invitations/{code}/accept`) |
+| Reloj | `/devices/pairing-codes`, `/devices/token`, `/devices/me` (vinculación, plan, tomas, adherencia, medicamentos, batería, push y chat), `/patients/{patientId}/devices` |
 | Medicamentos | `/patients/{patientId}/medications` y sus `/schedules` |
-| Plan y tomas | `GET /devices/me/plan`, `GET /patients/{patientId}/plan`, `POST /devices/me/dose-events`, `GET /patients/{patientId}/dose-history`, `GET /patients/{patientId}/adherence` |
-| Reportes | `/patients/{patientId}/reports` y `/reports/{reportId}/pdf` |
-| Chat IA | `POST /patients/{patientId}/chat/messages` (web), `POST /devices/me/chat/messages` (reloj) |
-| Telegram | `POST /telegram/webhook` |
+| Plan y tomas | `/patients/{patientId}/plan`, `/dose-events`, `/dose-history`, `/adherence` |
+| Reportes | `/patients/{patientId}/reports` y su `/pdf` |
+| Asistente | `/patients/{patientId}/chat/messages` (web), `/devices/me/chat/messages` (reloj) |
+| Telegram | `/telegram/webhook` (solo lo llama Telegram) |
 
-La lista completa y los esquemas están en el contrato. Con `APP_ENV=local` la documentación interactiva queda disponible en `/docs`.
+Con `APP_ENV=local`, la documentación interactiva está en `http://localhost:8000/docs`.
 
-## Instalación y ejecución
+## Estructura del código
 
-### Requisitos
-
-- [uv](https://docs.astral.sh/uv/) (instala Python 3.13 con `uv python install 3.13`)
-- Docker (PostgreSQL y Redis de desarrollo y pruebas de integración)
-
-### Pasos
-
-1. Clona el repositorio y entra en la carpeta:
-
-   ```sh
-   git clone https://github.com/StehvenObandoUcc/back-smartwatch.git
-   cd back-smartwatch
-   ```
-
-2. Crea tu propio archivo de entorno (`.env`) en la raíz del proyecto con la configuración que necesita la aplicación. Este README no documenta sus variables; consulta [`docs/claves-reales.md`](docs/claves-reales.md) para las claves de los servicios externos.
-
-3. Levanta PostgreSQL (puerto `5433` del host) y Redis (puerto `6379`):
-
-   ```sh
-   docker compose up -d --wait
-   ```
-
-4. Instala las dependencias y aplica las migraciones:
-
-   ```sh
-   uv sync
-   uv run python -m alembic upgrade head
-   ```
-
-5. Arranca la API:
-
-   ```sh
-   uv run python -m uvicorn app.main:create_app --factory --reload
-   ```
-
-   Para que el emulador del reloj o un teléfono alcancen la API, arráncala con `--host 0.0.0.0`.
-
-6. Comprueba que responde: `GET http://localhost:8000/health` y `GET http://localhost:8000/health/ready`.
-
-7. (Opcional) Arranca el worker en otra terminal para correo, alertas y reportes:
-
-   ```sh
-   PYTHONUTF8=1 uv run python -m arq app.worker.main.WorkerSettings
-   ```
-
-   `PYTHONUTF8=1` evita errores de codificación en la consola de Windows.
-
-8. Al terminar: `docker compose stop`.
-
-### Telegram
-
-Para un bot real hace falta un bot de @BotFather y una URL HTTPS pública. El script registra el webhook:
-
-```sh
-bash scripts/telegram-webhook.sh set https://tu-dominio.com
-bash scripts/telegram-webhook.sh info
-```
-
-### Verificación de punta a punta
-
-Con la API levantada (Git Bash, `curl` y `python` en el PATH):
-
-```sh
-bash scripts/verify-sprint-a.sh   # cuentas, paciente, medicamento, vinculación, plan, tomas, adherencia
-bash scripts/verify-sprint-b.sh   # correo/outbox, Telegram, alertas, reportes y chat
-```
-
-Cada paso imprime `OK` o `FALLÓ`, y el script termina con código distinto de cero si algo falla.
-
-## Calidad y pruebas
-
-Antes de hacer push:
-
-```sh
-uv run ruff check .
-uv run ruff format --check .
-uv run mypy
-uv run pytest               # unitarias + integración (requiere Docker)
-uv run pytest tests/unit    # solo unitarias, sin Docker
-```
-
-En Windows, si el lanzador de `uv run` falla, usa `uv run python -m mypy` y `uv run python -m pytest`. La CI (GitHub Actions) ejecuta estas comprobaciones y verifica que no haya migraciones pendientes.
-
-## Estructura de carpetas
+Cada dominio vive en `app/modules/<dominio>/` y sigue la cadena **router → service → repository**: el router solo habla HTTP, el servicio tiene las reglas y el repositorio las consultas SQL. Todo el I/O es asíncrono.
 
 ```
 back-smartwatch/
 ├── app/
-│   ├── core/            Config, logging, errores problem+json, DB, middleware, auth, rate limit
-│   ├── modules/         Un paquete por dominio (router → service → repository)
-│   │   ├── auth/            Registro, login, refresh, verificación y recuperación
-│   │   ├── users/           Perfil del usuario
+│   ├── main.py              create_app(): monta routers, middleware y dependencias
+│   ├── core/                Configuración, BD, errores, autenticación, límites, cookies, registro de accesos
+│   ├── modules/
+│   │   ├── auth/            Registro, login, refresh, verificación de correo y recuperación
+│   │   ├── users/           Perfil y borrado de la cuenta
 │   │   ├── patients/        Pacientes, cuidadores e invitaciones
-│   │   ├── consents/        Consentimientos por finalidad
+│   │   ├── consents/        Consentimientos
 │   │   ├── devices/         Vinculación y sesión del reloj
 │   │   ├── medications/     Medicamentos y horarios
-│   │   ├── plan/            Generación del plan de dosis con ETag
-│   │   ├── doses/           Eventos de toma, historial y adherencia
-│   │   ├── notifications/   Outbox, plantillas, canales (correo, Telegram) y alertas
-│   │   ├── reports/         Reportes y PDF
-│   │   ├── chat/            Chat con IA
-│   │   └── health/          Liveness y readiness
-│   ├── worker/          Worker arq (tareas programadas)
-│   └── main.py          create_app()
-├── migrations/          Migraciones Alembic (async)
-├── contracts/           openapi.yaml (fuente de verdad)
-├── docs/                ADR (docs/adr), planes de desarrollo y guía de claves
-├── scripts/             Verificación de sprints y registro del webhook de Telegram
-├── tests/               unit/ e integration/ (Testcontainers + Schemathesis)
-├── docker-compose.yml   PostgreSQL y Redis de desarrollo
-└── pyproject.toml       Dependencias y configuración de ruff, mypy y pytest
+│   │   ├── plan/            Generación del plan de 7 días
+│   │   ├── doses/           Tomas, historial y adherencia
+│   │   ├── notifications/   Outbox, plantillas, correo, Telegram y alertas
+│   │   ├── reports/         Reporte semanal y PDF
+│   │   ├── chat/            Asistente con IA
+│   │   ├── audit/           Registro de accesos a datos de salud
+│   │   └── health/          /health y /health/ready
+│   └── worker/              Worker arq y sus tareas programadas
+├── contracts/               openapi.yaml y excepciones acordadas de oasdiff
+├── migrations/              Migraciones de Alembic
+├── docs/
+│   ├── adr/                 Decisiones de diseño (por qué se hizo cada cosa así)
+│   └── claves-reales.md     Cómo obtener y configurar DeepSeek, Telegram y Resend
+├── scripts/                 Recorridos de verificación con curl y registro del webhook de Telegram
+├── tests/                   unit/ (sin Docker) e integration/ (Testcontainers)
+├── docker-compose.yml       PostgreSQL y Redis para desarrollo
+└── Procfile                 Procesos en Heroku: web, worker y migraciones
 ```
 
-## Cómo contribuir
+## Ejecutar en local
 
-1. Haz un fork o crea una rama desde `main` (`feat/api-<tema>`, `docs/<tema>`).
-2. Si el cambio toca la API, empieza por modificar [`contracts/openapi.yaml`](contracts/openapi.yaml): nunca introduzcas cambios incompatibles en endpoints publicados.
-3. Respeta la arquitectura `router → service → repository` y añade pruebas (autorización, idempotencia y adherencia son obligatorias cuando aplican).
-4. Ejecuta las comprobaciones de [Calidad y pruebas](#calidad-y-pruebas).
-5. Usa commits convencionales (`feat:`, `fix:`, `docs:`...) y abre un Pull Request pequeño que explique qué cambia, cómo se probó y qué endpoints cubre.
-6. Las decisiones de diseño relevantes se documentan en una ADR en `docs/adr/NNNN-titulo.md`.
+Requisitos: [uv](https://docs.astral.sh/uv/) y Docker (para PostgreSQL y Redis).
 
-No incluyas secretos, tokens ni datos de salud en el código, los logs o los PR.
+```sh
+cp .env.example .env                       # funciona sin claves: correo, chat y Telegram simulados
+docker compose up -d --wait                # PostgreSQL en el puerto 5433 y Redis en el 6379
+uv sync
+uv run python -m alembic upgrade head
+uv run python -m uvicorn app.main:create_app --factory --reload
+```
 
-## Licencia
+- Comprueba que responde en `http://localhost:8000/health/ready`.
+- Para que el emulador del reloj llegue a la API, arráncala con `--host 0.0.0.0`.
+- Para el worker, en otra terminal:
 
-Por confirmar. El repositorio no incluye un archivo de licencia.
+  ```sh
+  PYTHONUTF8=1 uv run python -m arq app.worker.main.WorkerSettings
+  ```
+- Para usar los servicios reales (DeepSeek, Telegram, Resend), sigue [`docs/claves-reales.md`](docs/claves-reales.md). Las claves van solo en `.env`, que git ignora.
+- Para un recorrido completo contra la API levantada:
+
+  ```sh
+  bash scripts/verify-sprint-a.sh   # cuenta, paciente, medicamento, reloj, plan, tomas, adherencia
+  bash scripts/verify-sprint-b.sh   # correo, Telegram, alertas, reportes y chat
+  ```
+- Al terminar: `docker compose stop`.
+
+## Pruebas y CI
+
+```sh
+uv run ruff check .
+uv run ruff format --check .
+uv run python -m mypy
+uv run python -m pytest tests/unit   # sin Docker
+uv run python -m pytest              # también las de integración (Testcontainers, necesita Docker)
+```
+
+GitHub Actions corre en cada PR:
+- lint, tipos y todas las pruebas, incluidas las de integración;
+- la comprobación de migraciones pendientes;
+- **oasdiff**, que falla si el contrato cambia de forma incompatible. Las excepciones acordadas con el frontend están en `contracts/oasdiff-ignore.txt`.
+
+## Despliegue
+
+La API corre en **Heroku** con tres procesos definidos en el `Procfile`:
+
+| Proceso | Qué hace |
+| --- | --- |
+| `release` | Aplica las migraciones antes de cada versión |
+| `web` | Sirve la API |
+| `worker` | Entrega avisos y genera reportes |
+
+- La configuración va en las *Config Vars* de Heroku: base de datos, Redis, `JWT_SECRET`, `WEB_ORIGIN`, claves de servicios y `TRUSTED_PROXY_HOPS=2`, porque el panel web llega a través de su proxy.
+- En producción `/docs` y `/openapi.json` están desactivados.
