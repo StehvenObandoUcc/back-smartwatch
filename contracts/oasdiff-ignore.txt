@@ -1,2 +1,6 @@
 POST /devices/me/chat/messages added the new `schedule_added` enum value to the `actions/items/type` response property for the response status `200`
 POST /devices/me/chat/messages added the new `add_schedule` enum value to the `pendingAction/oneOf[#/components/schemas/PendingAction]/type` response property for the response status `200`
+PATCH /users/me added the new `en` enum value to the `locale` response property for the response status `200`
+GET /users/me added the new `en` enum value to the `locale` response property for the response status `200`
+POST /auth/register added the new `en` enum value to the `user/locale` response property for the response status `201`
+POST /auth/login added the new `en` enum value to the `user/locale` response property for the response status `200`
