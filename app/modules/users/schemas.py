@@ -7,7 +7,7 @@ from pydantic import Field, model_validator
 from app.core.schemas import ApiModel, DisplayName, Timezone, require_partial_update
 
 Role = Literal["patient", "caregiver"]
-Locale = Literal["es"]
+Locale = Literal["es", "en"]
 
 
 class UserOut(ApiModel):

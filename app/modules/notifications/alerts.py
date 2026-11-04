@@ -66,6 +66,7 @@ class MissedDoseAlerts:
                     payload: dict[str, object] = {
                         "patient_name": patient.display_name,
                         "link": f"{self._web}/patients/{patient.id}",
+                        "locale": recipient.locale,
                     }
                     if channel == "email":
                         payload["to"] = recipient.email

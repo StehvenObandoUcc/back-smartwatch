@@ -32,6 +32,7 @@ from app.modules.chat.prompt import (
     ADD_SCHEDULE_TOOL,
     CREATE_MEDICATION_TOOL,
     MAX_MEDICATIONS_IN_CONTEXT,
+    Lang,
     PromptDose,
     PromptMedication,
     build_system_prompt,
@@ -67,11 +68,30 @@ from app.modules.patients.models import Patient
 from app.modules.patients.service import PatientService, patient_not_found
 from app.modules.plan.generator import day_start, doses_in_range, local_today
 from app.modules.plan.repository import PlanRepository
+from app.modules.users.repository import UserRepository
 
 logger = get_logger(__name__)
 
 _STATUS_LABELS = {"TAKEN": "tomada", "SKIPPED": "omitida", "MISSED": "sin registrar"}
 PENDING_ACTION_TTL_SECONDS = 600
+
+# Lo que escribe el servidor (no el modelo) en el reloj, en el idioma de la cuenta.
+_TEXTS: dict[Lang, dict[str, str]] = {
+    "es": {
+        "propose_medication": "Voy a agregar {}. ¿Lo confirmas?",
+        "add": "Agregar {}",
+        "confirm": "{}. ¿Lo confirmas?",
+        "not_understood": "No entendí bien el medicamento o la hora. ¿Me lo repites?",
+        "done": "Listo, agregué {}.",
+    },
+    "en": {
+        "propose_medication": "I'll add {}. Do you confirm?",
+        "add": "Add {}",
+        "confirm": "{}. Do you confirm?",
+        "not_understood": "I didn't catch the medication or the time. Could you say it again?",
+        "done": "Done, I added {}.",
+    },
+}
 
 
 class ChatUnavailableError(DomainError):
@@ -164,6 +184,12 @@ class ChatService:
             )
         ]
         return build_system_prompt(now.astimezone(tz), doses, short=short, medications=medications)
+
+    async def _lang(self, patient: Patient) -> Lang:
+        """Idioma de la cuenta del paciente o, si es gestionado, de quien lo creó."""
+        user_id = patient.owner_user_id or patient.created_by_user_id
+        user = await UserRepository(self._session).get(user_id) if user_id else None
+        return "en" if user is not None and user.locale == "en" else "es"
 
     async def _reserve(
         self, principal_id: uuid.UUID, patient: Patient, now: datetime
@@ -267,8 +293,10 @@ class ChatService:
         await self._require_consents(patient.id)
         await self._limiter.hit("chat:principal", str(device.id), self._settings.rate_chat_user)
         now = utcnow()
+        lang = await self._lang(patient)
+        text_for = _TEXTS[lang]
         if data.confirm_action_id is not None:
-            return await self._confirm(device.id, patient, data.confirm_action_id, now)
+            return await self._confirm(device.id, patient, data.confirm_action_id, now, lang)
         turns = [Turn(t.role, t.content) for t in data.history] + [Turn("user", data.message or "")]
         system = await self._prompt(patient, now, short=True)
         day, remaining = await self._reserve(device.id, patient, now)
@@ -295,15 +323,15 @@ class ChatService:
         pending: PendingAction | None = None
         for draft in _drafts(calls):
             if isinstance(draft, MedicationDraft):
-                pending = await self._propose(device.id, patient, draft, now)
-                reply = f"Voy a agregar {pending.summary}. ¿Lo confirmas?"
+                pending = await self._propose(device.id, patient, draft, now, lang)
+                reply = text_for["propose_medication"].format(pending.summary)
                 break
-            pending = await self._propose_schedule(device.id, patient, draft, now)
+            pending = await self._propose_schedule(device.id, patient, draft, now, lang)
             if pending is not None:
-                reply = f"{pending.summary}. ¿Lo confirmas?"
+                reply = text_for["confirm"].format(pending.summary)
                 break
         if pending is None and calls:  # pidió agregar algo, pero los datos no son válidos
-            reply = "No entendí bien el medicamento o la hora. ¿Me lo repites?"
+            reply = text_for["not_understood"]
         elif pending is None:
             reply = shorten_for_watch("".join(text))
         if not reply:
@@ -313,7 +341,12 @@ class ChatService:
         return WatchChatReply(reply=reply, remaining_messages=remaining, pending_action=pending)
 
     async def _propose(
-        self, device_id: uuid.UUID, patient: Patient, draft: MedicationDraft, now: datetime
+        self,
+        device_id: uuid.UUID,
+        patient: Patient,
+        draft: MedicationDraft,
+        now: datetime,
+        lang: Lang,
     ) -> PendingAction:
         """Guarda la propuesta sin crear nada. Su id es el `clientId` del medicamento: así
         reintentar la confirmación devuelve el mismo en vez de duplicarlo."""
@@ -333,10 +366,15 @@ class ChatService:
             create.model_dump_json(by_alias=True),
             ex=PENDING_ACTION_TTL_SECONDS,
         )
-        return PendingAction(id=action_id, summary=_summary(create))
+        return PendingAction(id=action_id, summary=_summary(create, lang))
 
     async def _confirm(
-        self, device_id: uuid.UUID, patient: Patient, action_id: uuid.UUID, now: datetime
+        self,
+        device_id: uuid.UUID,
+        patient: Patient,
+        action_id: uuid.UUID,
+        now: datetime,
+        lang: Lang,
     ) -> WatchChatReply:
         """Crea lo propuesto. No llama al modelo ni gasta el cupo diario."""
         raw = await self._redis.get(_action_key(device_id, action_id))
@@ -349,12 +387,17 @@ class ChatService:
         stored = json.loads(raw)
         if stored.get("type") == "add_schedule":
             return await self._confirm_schedule(
-                device_id, patient, action_id, ScheduleProposal.model_validate(stored), remaining
+                device_id,
+                patient,
+                action_id,
+                ScheduleProposal.model_validate(stored),
+                remaining,
+                lang,
             )
         create = DeviceMedicationCreate.model_validate(stored)
         created, _ = await MedicationService(self._session).create_from_device(patient.id, create)
         return WatchChatReply(
-            reply=f"Listo, agregué {_summary(create)}.",
+            reply=_TEXTS[lang]["done"].format(_summary(create, lang)),
             remaining_messages=remaining,
             actions=[
                 ChatAction(medication_id=created.medication.id, schedule_id=created.schedule.id)
@@ -362,7 +405,12 @@ class ChatService:
         )
 
     async def _propose_schedule(
-        self, device_id: uuid.UUID, patient: Patient, draft: ScheduleDraft, now: datetime
+        self,
+        device_id: uuid.UUID,
+        patient: Patient,
+        draft: ScheduleDraft,
+        now: datetime,
+        lang: Lang,
     ) -> PendingAction | None:
         """Como `_propose`, para un medicamento que ya existe. Si no es del paciente o está
         archivado, la llamada se ignora (None)."""
@@ -378,12 +426,14 @@ class ChatService:
                 start_date=local_today(ZoneInfo(patient.timezone), now),
             ),
             description=describe_schedule(
-                medication.name, medication.dosage, draft.times, draft.days_of_week
+                medication.name, medication.dosage, draft.times, draft.days_of_week, lang
             ),
         )
         await self._save(device_id, action_id, proposal, PENDING_ACTION_TTL_SECONDS)
         return PendingAction(
-            id=action_id, type="add_schedule", summary=f"Agregar {proposal.description}"
+            id=action_id,
+            type="add_schedule",
+            summary=_TEXTS[lang]["add"].format(proposal.description),
         )
 
     async def _confirm_schedule(
@@ -393,6 +443,7 @@ class ChatService:
         action_id: uuid.UUID,
         proposal: ScheduleProposal,
         remaining: int,
+        lang: Lang,
     ) -> WatchChatReply:
         schedule_id = proposal.schedule_id
         if schedule_id is None:
@@ -408,7 +459,7 @@ class ChatService:
             done = proposal.model_copy(update={"schedule_id": schedule_id})
             await self._save(device_id, action_id, done, max(ttl, 1))
         return WatchChatReply(
-            reply=f"Listo, agregué {proposal.description}.",
+            reply=_TEXTS[lang]["done"].format(proposal.description),
             remaining_messages=remaining,
             actions=[
                 ChatAction(
@@ -450,9 +501,9 @@ def _drafts(calls: list[ToolCall]) -> list[MedicationDraft | ScheduleDraft]:
     return drafts
 
 
-def _summary(create: DeviceMedicationCreate) -> str:
+def _summary(create: DeviceMedicationCreate, lang: Lang) -> str:
     return describe_medication(
-        create.name, create.dosage, create.schedule.times, create.schedule.days_of_week
+        create.name, create.dosage, create.schedule.times, create.schedule.days_of_week, lang
     )
 
 

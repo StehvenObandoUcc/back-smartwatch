@@ -115,6 +115,7 @@ def _recipient(**overrides: object) -> Recipient:
         "user_id": uuid.uuid4(),
         "email": "a@example.com",
         "email_verified": True,
+        "locale": "es",
         "chat_id": 5,
         "prefs": {
             "missed_dose_email": True,

@@ -25,6 +25,7 @@ class Recipient:
     user_id: uuid.UUID
     email: str
     email_verified: bool
+    locale: str
     chat_id: int | None
     prefs: dict[str, bool]  # claves como "missed_dose_email"
     consent: bool
@@ -83,6 +84,7 @@ async def resolve_recipients(
                 user_id=user.id,
                 email=user.email,
                 email_verified=user.email_verified_at is not None,
+                locale=user.locale,
                 chat_id=chat_id,
                 # Sin fila de preferencias, todo activado.
                 prefs={f: getattr(pref, f) if pref else True for f in _PREF_FIELDS},

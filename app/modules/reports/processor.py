@@ -133,6 +133,7 @@ class ReportProcessor:
                     "missed": c.missed,
                     "period_start": report.period_start.isoformat(),
                     "period_end": report.period_end.isoformat(),
+                    "locale": recipient.locale,
                 }
                 if channel == "email":
                     payload["to"] = recipient.email
