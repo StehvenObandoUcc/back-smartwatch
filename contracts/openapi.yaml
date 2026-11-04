@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: API de recordatorios de medicamentos
-  version: 0.11.0
+  version: 0.12.0
   x-closed-phase: 3
   description: |
     Contrato de la API. Fuente de verdad del backend y de los clientes generados por el frontend
@@ -61,6 +61,12 @@ info:
     - 4 Tras el E2E con el reloj: tomas y adherencia desde la web y el reloj, medicamentos
       creados desde el reloj (también por voz con el asistente), desvinculación desde el reloj,
       batería del reloj y deshacer una toma registrada.
+
+    Cambios por versión:
+    - 0.12.0: el asistente del reloj reconoce los medicamentos del paciente y puede proponer
+      agregarles un horario (`pendingAction.type: add_schedule`, `actions[].type:
+      schedule_added`). `WatchChatRequest.history` acepta `null` (equivale a vacío).
+    - 0.11.0: `DELETE /users/me` (eliminar la cuenta).
 servers:
   - url: http://localhost:8000
     description: Desarrollo local
@@ -1913,7 +1919,16 @@ paths:
            el plan al momento. Confirmar no llama al modelo ni gasta el cupo diario; reintentar
            la confirmación devuelve el mismo medicamento. Una propuesta caduca a los 10 minutos
            o si es de otro reloj: 404 (`code: chat_action_not_found`).
-        El asistente nunca modifica ni borra medicamentos o dosis existentes.
+
+        Agregar un horario a un medicamento que ya existe (0.12.0), igual en dos pasos: si el
+        usuario nombra uno de sus medicamentos ("agrega las 14:00 a la metformina"), no se piden
+        nombre ni dosis; la respuesta trae `pendingAction` con `type: add_schedule` y su resumen
+        ("Agregar a Metformina 850 mg las 14:00 todos los días"). Al confirmar se crea igual que
+        en `POST /patients/{patientId}/medications/{medicationId}/schedules` (sube la versión del
+        plan) y la respuesta trae `actions: [{ type: schedule_added, medicationId, scheduleId }]`.
+        Reintentar la confirmación devuelve el mismo horario.
+        El asistente nunca borra medicamentos, horarios ni dosis, ni cambia los horarios que ya
+        existen: solo agrega.
       requestBody:
         required: true
         content:
@@ -3313,8 +3328,8 @@ components:
           minLength: 1
           maxLength: 500
         history:
-          type: array
-          description: Turnos anteriores, del más antiguo al más reciente.
+          type: [array, "null"]
+          description: Turnos anteriores, del más antiguo al más reciente. `null` equivale a vacío.
           maxItems: 10
           items:
             $ref: "#/components/schemas/ChatTurn"
@@ -3351,17 +3366,19 @@ components:
           format: uuid
         type:
           type: string
-          enum: [create_medication]
+          enum: [create_medication, add_schedule]
         summary:
           type: string
-          examples: ["Losartán 50 mg a las 08:00 todos los días"]
+          examples:
+            - "Losartán 50 mg a las 08:00 todos los días"
+            - "Agregar a Metformina 850 mg las 14:00 todos los días"
     ChatAction:
       type: object
       required: [type, medicationId, scheduleId]
       properties:
         type:
           type: string
-          enum: [medication_created]
+          enum: [medication_created, schedule_added]
         medicationId:
           type: string
           format: uuid
