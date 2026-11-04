@@ -1,6 +1,7 @@
 import uuid
+from datetime import date
 
-from sqlalchemy import delete, func, select, update
+from sqlalchemy import and_, delete, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.pagination import Cursor, after_cursor
@@ -29,6 +30,35 @@ class MedicationRepository:
             )
         )
         return result.scalar_one_or_none()
+
+    async def active_with_schedules(
+        self, patient_id: uuid.UUID, today: date, limit: int
+    ) -> list[tuple[Medication, list[Schedule]]]:
+        """Medicamentos no archivados con sus horarios vigentes (sin fin o que acaban hoy o
+        después); un medicamento sin ninguno va con la lista vacía."""
+        current = and_(
+            Schedule.medication_id == Medication.id,
+            or_(Schedule.end_date.is_(None), Schedule.end_date >= today),
+        )
+        meds = (
+            select(Medication.id)
+            .where(Medication.patient_id == patient_id, Medication.archived_at.is_(None))
+            .order_by(Medication.created_at, Medication.id)
+            .limit(limit)
+            .scalar_subquery()
+        )
+        rows = await self._session.execute(
+            select(Medication, Schedule)
+            .outerjoin(Schedule, current)
+            .where(Medication.id.in_(meds))
+            .order_by(Medication.created_at, Medication.id, Schedule.created_at)
+        )
+        grouped: dict[uuid.UUID, tuple[Medication, list[Schedule]]] = {}
+        for medication, schedule in rows.tuples():
+            _, schedules = grouped.setdefault(medication.id, (medication, []))
+            if schedule is not None:
+                schedules.append(schedule)
+        return list(grouped.values())
 
     async def list(
         self, patient_id: uuid.UUID, include_archived: bool, cursor: Cursor | None, limit: int
