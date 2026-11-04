@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: API de recordatorios de medicamentos
-  version: 0.12.0
+  version: 0.13.0
   x-closed-phase: 3
   description: |
     Contrato de la API. Fuente de verdad del backend y de los clientes generados por el frontend
@@ -63,6 +63,10 @@ info:
       batería del reloj y deshacer una toma registrada.
 
     Cambios por versión:
+    - 0.13.0: `Locale` admite `en`. El asistente responde en el idioma en que le escriben;
+      los textos que arma el servidor (resúmenes y confirmaciones del reloj) y los avisos por
+      correo y Telegram siguen el `locale` de la cuenta. El valor nuevo de enum en las
+      respuestas es un cambio acordado con el frontend (`contracts/oasdiff-ignore.txt`).
     - 0.12.0: el asistente del reloj reconoce los medicamentos del paciente y puede proponer
       agregarles un horario (`pendingAction.type: add_schedule`, `actions[].type:
       schedule_added`). `WatchChatRequest.history` acepta `null` (equivale a vacío). Los dos
@@ -2184,7 +2188,7 @@ components:
       maxLength: 80
     Locale:
       type: string
-      enum: [es]
+      enum: [es, en]
       default: es
 
     # ─── Salud ─────────────────────────────────────────────────────────────────
