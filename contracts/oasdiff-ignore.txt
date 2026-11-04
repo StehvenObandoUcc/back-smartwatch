@@ -1,0 +1,2 @@
+POST /devices/me/chat/messages added the new `schedule_added` enum value to the `actions/items/type` response property for the response status `200`
+POST /devices/me/chat/messages added the new `add_schedule` enum value to the `pendingAction/oneOf[#/components/schemas/PendingAction]/type` response property for the response status `200`
