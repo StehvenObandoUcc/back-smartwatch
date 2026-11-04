@@ -9,10 +9,13 @@ from pydantic import ValidationError
 
 from app.core.config import Settings
 from app.modules.chat.prompt import (
+    ADD_SCHEDULE_TOOL,
     CREATE_MEDICATION_TOOL,
     PromptDose,
+    PromptMedication,
     build_system_prompt,
     describe_medication,
+    describe_schedule,
     shorten_for_watch,
 )
 from app.modules.chat.provider import (
@@ -23,8 +26,8 @@ from app.modules.chat.provider import (
     ToolCall,
     Turn,
 )
-from app.modules.chat.schemas import WatchChatRequest
-from app.modules.chat.service import _draft
+from app.modules.chat.schemas import MedicationDraft, ScheduleDraft, WatchChatRequest
+from app.modules.chat.service import _drafts
 
 BOGOTA = ZoneInfo("America/Bogota")
 NOW = datetime(2026, 10, 7, 9, 30, tzinfo=BOGOTA)
@@ -63,8 +66,26 @@ def test_prompt_carries_the_guardrails_and_the_style() -> None:
     for rule in ("No cambies ni sugieras cambiar dosis", "No diagnostiques", "emergencias"):
         assert rule in web
         assert rule in watch
-    assert "3 frases" in watch
-    assert "3 frases" not in web
+    assert "25 palabras" in watch
+    assert "25 palabras" not in web
+
+
+def test_prompt_lists_every_active_medication_even_without_doses() -> None:
+    with_schedule = PromptMedication(
+        uuid.UUID(int=1), "Metformina", "850 mg", [(["08:00", "20:00"], [1, 2, 3, 4, 5, 6, 7])]
+    )
+    weekly = PromptMedication(uuid.UUID(int=2), "Vitamina D", "1 cápsula", [(["09:00"], [7])])
+    unscheduled = PromptMedication(uuid.UUID(int=3), "Losartán", "50 mg", [])
+
+    prompt = build_system_prompt(
+        NOW, [], short=True, medications=[with_schedule, weekly, unscheduled]
+    )
+
+    assert f"- [{uuid.UUID(int=1)}] Metformina, 850 mg — 08:00 y 20:00, todos los días" in prompt
+    assert f"- [{uuid.UUID(int=2)}] Vitamina D, 1 cápsula — 09:00, los domingos" in prompt
+    assert f"- [{uuid.UUID(int=3)}] Losartán, 50 mg — sin horario" in prompt
+    assert "No hay dosis programadas" in prompt  # la lista de dosis sigue aparte
+    assert "No tiene medicamentos" in build_system_prompt(NOW, [], short=True)
 
 
 def test_prompt_never_contains_identifying_data() -> None:
@@ -94,6 +115,15 @@ def test_watch_reply_keeps_short_answers_and_handles_empty() -> None:
     assert shorten_for_watch("  \n ") == ""
 
 
+def test_watch_reply_is_capped_at_forty_words() -> None:
+    long = " ".join(f"palabra{i}," for i in range(60))
+
+    words = shorten_for_watch(long).split()
+
+    assert len(words) == 40
+    assert words[-1] == "palabra39…"
+
+
 # ─── Proveedores ──────────────────────────────────────────────────────────────
 
 
@@ -104,6 +134,26 @@ async def test_fake_provider_streams_words_and_usage() -> None:
 
     assert "".join(e.text or "" for e in events) == "Respuesta simulada a: hola"
     assert events[-1].usage is not None
+
+
+async def test_fake_provider_adds_a_schedule_to_a_listed_medication() -> None:
+    med = uuid.UUID(int=7)
+    system = build_system_prompt(
+        NOW,
+        [],
+        short=True,
+        medications=[PromptMedication(med, "Metformina", "850 mg", [])],
+    )
+    ask = [Turn("user", "Agrega las 14:00 a la METFORMÍNA")]
+    tools = [CREATE_MEDICATION_TOOL, ADD_SCHEDULE_TOOL]
+
+    events = [e async for e in FakeChatProvider().stream(system, ask, max_tokens=10, tools=tools)]
+    without_tools = [e async for e in FakeChatProvider().stream(system, ask, max_tokens=10)]
+
+    [call] = [e.tool_call for e in events if e.tool_call]
+    assert call.name == "add_schedule"
+    assert json.loads(call.arguments) == {"medicationId": str(med), "times": ["14:00"]}
+    assert all(e.tool_call is None for e in without_tools)
 
 
 def _settings(**overrides: object) -> Settings:
@@ -250,9 +300,17 @@ def test_medication_summary_reads_naturally(
     assert describe_medication("Losartán", "50 mg", times, days) == expected
 
 
+def test_schedule_summary_reads_naturally() -> None:
+    assert (
+        describe_schedule("Metformina", "850 mg", ["14:00"], [1, 2, 3, 4, 5, 6, 7])
+        == "a Metformina 850 mg las 14:00 todos los días"
+    )
+
+
 def test_only_the_watch_prompt_can_add_medications() -> None:
-    assert "create_medication" in build_system_prompt(NOW, [], short=True)
-    assert "create_medication" not in build_system_prompt(NOW, [], short=False)
+    for tool in ("create_medication", "add_schedule"):
+        assert tool in build_system_prompt(NOW, [], short=True)
+        assert tool not in build_system_prompt(NOW, [], short=False)
 
 
 @pytest.mark.parametrize("body", [{}, {"message": "hola", "confirmActionId": str(uuid.uuid4())}])
@@ -261,20 +319,33 @@ def test_watch_request_needs_exactly_one_of_message_or_confirmation(body: dict[s
         WatchChatRequest.model_validate(body)
 
 
-def test_tool_arguments_are_validated_like_the_web() -> None:
-    valid = ToolCall(
-        "create_medication", '{"name": "Losartán", "dosage": "50 mg", "times": ["08:00"]}'
-    )
-    draft = _draft([ToolCall("otra", "{}"), valid])
+def test_watch_request_takes_a_null_history_as_empty() -> None:
+    assert WatchChatRequest.model_validate({"message": "hola", "history": None}).history == []
 
-    assert draft is not None
-    assert draft.days_of_week == [1, 2, 3, 4, 5, 6, 7]
-    assert (
-        _draft([ToolCall("create_medication", '{"name": "X", "dosage": "1", "times": ["8"]}')])
-        is None
+
+def test_tool_arguments_are_validated_like_the_web() -> None:
+    med = str(uuid.uuid4())
+    drafts = _drafts(
+        [
+            ToolCall("otra", "{}"),
+            ToolCall("create_medication", '{"name": "X", "dosage": "1", "times": ["8"]}'),
+            ToolCall("add_schedule", json.dumps({"medicationId": med, "times": ["25:00"]})),
+            ToolCall("add_schedule", json.dumps({"medicationId": "no-uuid", "times": ["08:00"]})),
+            ToolCall("create_medication", "no es json"),
+            ToolCall(
+                "create_medication", '{"name": "Losartán", "dosage": "50 mg", "times": ["08:00"]}'
+            ),
+            ToolCall("add_schedule", json.dumps({"medicationId": med, "times": ["14:00"]})),
+        ]
     )
-    assert _draft([ToolCall("create_medication", "no es json")]) is None
-    assert _draft([]) is None
+
+    [medication, schedule] = drafts
+    assert isinstance(medication, MedicationDraft)
+    assert medication.days_of_week == [1, 2, 3, 4, 5, 6, 7]
+    assert isinstance(schedule, ScheduleDraft)
+    assert (str(schedule.medication_id), schedule.times) == (med, ["14:00"])
+    assert schedule.days_of_week == [1, 2, 3, 4, 5, 6, 7]
+    assert _drafts([]) == []
 
 
 def _tool_chunk(index: int, name: str | None, arguments: str) -> str:

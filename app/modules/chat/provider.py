@@ -1,5 +1,8 @@
 """Proveedor del modelo de IA. DeepSeek (SDK `openai`) en producción; uno simulado sin red."""
 
+import json
+import re
+import unicodedata
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import Any, Protocol
@@ -119,8 +122,28 @@ class DeepSeekProvider:
         await self._client.close()
 
 
+def _plain(text: str) -> str:
+    return unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode().lower()
+
+
+_FAKE_MEDICATION = re.compile(r"^- \[([0-9a-f-]{36})\] ([^,]+),", re.MULTILINE)
+_FAKE_TIME = re.compile(r"\b([01][0-9]|2[0-3]):([0-5][0-9])\b")
+
+
+def _fake_add_schedule(system: str, question: str) -> ToolCall | None:
+    """«agrega las 14:00 a la metformina»: hora HH:MM y el nombre de un medicamento de la lista."""
+    times = [f"{h}:{m}" for h, m in _FAKE_TIME.findall(question)]
+    for medication_id, name in _FAKE_MEDICATION.findall(system):
+        if times and _plain(name) in _plain(question):
+            return ToolCall(
+                "add_schedule", json.dumps({"medicationId": medication_id, "times": times})
+            )
+    return None
+
+
 class FakeChatProvider:
-    """Solo desarrollo y pruebas: responde sin red ni clave, repitiendo la pregunta."""
+    """Solo desarrollo y pruebas: responde sin red ni clave, repitiendo la pregunta. Si tiene la
+    herramienta `add_schedule` y la pregunta trae una hora y uno de los medicamentos, la usa."""
 
     async def stream(
         self,
@@ -131,6 +154,12 @@ class FakeChatProvider:
         tools: list[dict[str, Any]] | None = None,
     ) -> AsyncIterator[StreamEvent]:
         question = turns[-1].content if turns else ""
+        if any(tool["function"]["name"] == "add_schedule" for tool in tools or []):
+            call = _fake_add_schedule(system, question)
+            if call is not None:
+                yield StreamEvent(tool_call=call)
+                yield StreamEvent(usage=Usage(len(system) // 4, 1))
+                return
         words = f"Respuesta simulada a: {question}".split(" ")
         for index, word in enumerate(words):
             yield StreamEvent(text=word + (" " if index < len(words) - 1 else ""))

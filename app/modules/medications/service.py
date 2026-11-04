@@ -187,6 +187,25 @@ class MedicationService:
             medication=to_medication_out(medication), schedule=to_schedule_out(schedule)
         ), True
 
+    async def add_schedule_from_device(
+        self, patient_id: uuid.UUID, medication_id: uuid.UUID, data: ScheduleCreate
+    ) -> Schedule:
+        """Igual que `create_schedule`, con el acceso que da el token del reloj. Un medicamento
+        archivado o de otro paciente es 404."""
+        await self._consents.require(patient_id, "health_data")
+        medication = await self._medications.get(patient_id, medication_id)
+        if medication is None or medication.archived_at is not None:
+            raise medication_not_found()
+        if await self._schedules.count(medication_id) >= MAX_SCHEDULES_PER_MEDICATION:
+            raise UnprocessableError(
+                ["body"],
+                f"Un medicamento admite como máximo {MAX_SCHEDULES_PER_MEDICATION} horarios",
+            )
+        schedule = self._new_schedule(medication_id, data)
+        await self._medications.bump_plan_version(patient_id)
+        await self._session.commit()
+        return schedule
+
     async def _with_schedule(
         self, medication: Medication, fallback: ScheduleCreate
     ) -> MedicationWithSchedule:
