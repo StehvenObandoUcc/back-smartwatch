@@ -65,7 +65,9 @@ info:
     Cambios por versión:
     - 0.12.0: el asistente del reloj reconoce los medicamentos del paciente y puede proponer
       agregarles un horario (`pendingAction.type: add_schedule`, `actions[].type:
-      schedule_added`). `WatchChatRequest.history` acepta `null` (equivale a vacío).
+      schedule_added`). `WatchChatRequest.history` acepta `null` (equivale a vacío). Los dos
+      valores nuevos de enum en la respuesta son un cambio acordado con el frontend: el reloj
+      anterior a 0.12.0 no se cierra al recibirlos (`contracts/oasdiff-ignore.txt`).
     - 0.11.0: `DELETE /users/me` (eliminar la cuenta).
 servers:
   - url: http://localhost:8000
