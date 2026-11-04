@@ -113,7 +113,7 @@ class DoseService:
                 patient.id, {event.schedule_id for event in batch.events}
             )
         }
-        # ponytail: un INSERT por evento (máx. 100); uno múltiple si el volumen lo pide
+        # Límite: un INSERT por evento (máx. 100); uno múltiple si el volumen lo pide
         results = [
             await self._record_one(device_id, patient.id, tz, rules, e) for e in batch.events
         ]
