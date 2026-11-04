@@ -447,7 +447,7 @@ class ChatService:
     ) -> WatchChatReply:
         schedule_id = proposal.schedule_id
         if schedule_id is None:
-            # ponytail: dos confirmaciones simultáneas de la misma propuesta crearían dos
+            # Límite: dos confirmaciones simultáneas de la misma propuesta crearían dos
             # horarios; el reloj confirma una vez y reintenta en serie. Con un SET NX de
             # «en curso» se cerraría si hiciera falta.
             schedule = await MedicationService(self._session).add_schedule_from_device(

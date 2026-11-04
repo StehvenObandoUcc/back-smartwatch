@@ -213,7 +213,7 @@ class MedicationService:
         if schedules:
             schedule = schedules[0]
         else:
-            # ponytail: si en la web borraron su horario antes del reintento, se vuelve a crear
+            # Límite: si en la web borraron su horario antes del reintento, se vuelve a crear
             # con el del cuerpo; el reintento llega en segundos, así que casi nunca pasa.
             schedule = self._new_schedule(medication.id, fallback)
             await self._medications.bump_plan_version(medication.patient_id)
