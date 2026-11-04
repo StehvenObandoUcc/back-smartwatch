@@ -12,7 +12,14 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from app.core.config import RateLimit
-from app.modules.chat.provider import ProviderError, StreamEvent, ToolCall, Turn, Usage
+from app.modules.chat.provider import (
+    FakeChatProvider,
+    ProviderError,
+    StreamEvent,
+    ToolCall,
+    Turn,
+    Usage,
+)
 from tests.conftest import make_client
 from tests.integration.conftest import AppFactory
 from tests.integration.helpers import assert_problem, bearer, register
@@ -422,7 +429,7 @@ async def test_watch_chat_returns_a_short_plain_reply(
     }
     call = provider.calls[0]
     assert call["max_tokens"] == 700  # idem; la brevedad la fija el prompt
-    assert "3 frases" in call["system"]
+    assert "25 palabras" in call["system"]
     assert "Metformina" in call["system"]
     [usage] = await _usage(db_engine)
     assert (usage["messages"], usage["input_tokens"], usage["output_tokens"]) == (1, 120, 8)
@@ -570,7 +577,7 @@ async def test_invalid_tool_arguments_ask_again_without_proposing(
 
     assert response.status_code == 200
     assert response.json()["pendingAction"] is None
-    assert "nombre, la dosis y la hora" in response.json()["reply"]
+    assert "¿Me lo repites?" in response.json()["reply"]
 
 
 @pytest.mark.parametrize(
@@ -601,3 +608,155 @@ async def test_web_chat_gets_no_tools(chat: tuple[AsyncClient, ScriptedProvider]
     await _ask(client, owner, patient_id)
 
     assert provider.calls[0]["tools"] is None
+
+
+# ─── Agregar un horario a un medicamento existente ───────────────────────────
+
+
+def _add_schedule(medication_id: str, times: list[str]) -> ToolCall:
+    return ToolCall("add_schedule", json.dumps({"medicationId": medication_id, "times": times}))
+
+
+async def _schedules(
+    client: AsyncClient, owner: Session, patient_id: str, medication_id: str
+) -> list[Any]:
+    response = await client.get(
+        f"/patients/{patient_id}/medications/{medication_id}/schedules", headers=bearer(owner)
+    )
+    items: list[Any] = response.json()["items"]
+    return items
+
+
+async def test_the_model_sees_medications_without_doses_today_or_tomorrow(
+    chat: tuple[AsyncClient, ScriptedProvider],
+) -> None:
+    client, provider = chat
+    owner, patient_id = await _patient(client)
+    weekly = await _medication(client, owner, patient_id, name="Vitamina D", dosage="1 cápsula")
+    # Empieza en el futuro: no tiene dosis hoy ni mañana, pero el modelo debe verlo.
+    await _schedule(
+        client,
+        owner,
+        patient_id,
+        weekly["id"],
+        times=["09:00"],
+        daysOfWeek=[3],
+        startDate="2099-01-01",
+    )
+    bare = await _medication(client, owner, patient_id, name="Losartán", dosage="50 mg")
+    archived = await _medication(client, owner, patient_id, name="Aspirina", dosage="100 mg")
+    await client.delete(
+        f"/patients/{patient_id}/medications/{archived['id']}", headers=bearer(owner)
+    )
+    watch = await _watch(client, owner, patient_id)
+
+    await _ask_watch(client, watch)
+
+    system = provider.calls[0]["system"]
+    assert f"[{weekly['id']}] Vitamina D, 1 cápsula — 09:00, los miércoles" in system
+    assert f"[{bare['id']}] Losartán, 50 mg — sin horario" in system
+    assert "Aspirina" not in system
+
+
+async def test_watch_assistant_adds_a_schedule_after_confirmation(
+    chat: tuple[AsyncClient, ScriptedProvider],
+) -> None:
+    client, provider = chat
+    owner, patient_id = await _patient(client)
+    medication = await _medication(client, owner, patient_id, dosage="850 mg")
+    await _schedule(client, owner, patient_id, medication["id"], times=["08:00"])
+    watch = await _watch(client, owner, patient_id)
+    provider.chunks = []
+    provider.tool_calls = [_add_schedule(medication["id"], ["14:00"])]
+
+    proposal = await _ask_watch(client, watch, message="agrega las 14:00 a la metformina")
+
+    assert proposal.status_code == 200, proposal.text
+    pending = proposal.json()["pendingAction"]
+    assert pending["type"] == "add_schedule"
+    assert pending["summary"] == "Agregar a Metformina 850 mg las 14:00 todos los días"
+    assert proposal.json()["reply"] == f"{pending['summary']}. ¿Lo confirmas?"
+    assert len(await _schedules(client, owner, patient_id, medication["id"])) == 1
+    plan = await client.get("/devices/me/plan", headers=watch)
+
+    confirmed = await _confirm(client, watch, pending["id"])
+
+    assert confirmed.status_code == 200, confirmed.text
+    body = confirmed.json()
+    assert body["reply"] == "Listo, agregué a Metformina 850 mg las 14:00 todos los días."
+    assert body["remainingMessages"] == 2
+    [action] = body["actions"]
+    assert action["type"] == "schedule_added"
+    assert action["medicationId"] == medication["id"]
+    schedules = await _schedules(client, owner, patient_id, medication["id"])
+    assert action["scheduleId"] in {s["id"] for s in schedules}
+    assert [s["times"] for s in schedules if s["id"] == action["scheduleId"]] == [["14:00"]]
+    after = await client.get(
+        "/devices/me/plan", headers={**watch, "If-None-Match": plan.headers["etag"]}
+    )
+    assert after.status_code == 200  # subió la versión del plan
+
+    again = await _confirm(client, watch, pending["id"])
+    assert again.json()["actions"] == body["actions"]
+    assert len(await _schedules(client, owner, patient_id, medication["id"])) == 2
+
+
+@pytest.mark.parametrize("case", ["other_patient", "archived", "bad_time"])
+async def test_invalid_add_schedule_calls_are_ignored(
+    chat: tuple[AsyncClient, ScriptedProvider], case: str
+) -> None:
+    client, provider = chat
+    owner, patient_id = await _patient(client)
+    other, other_patient = await _patient(client)
+    mine = await _medication(client, owner, patient_id)
+    foreign = await _medication(client, other, other_patient)
+    if case == "archived":
+        await client.delete(
+            f"/patients/{patient_id}/medications/{mine['id']}", headers=bearer(owner)
+        )
+    target, times = {
+        "other_patient": (foreign["id"], ["14:00"]),
+        "archived": (mine["id"], ["14:00"]),
+        "bad_time": (mine["id"], ["2 pm"]),
+    }[case]
+    watch = await _watch(client, owner, patient_id)
+    provider.chunks = []
+    provider.tool_calls = [_add_schedule(target, times)]
+
+    response = await _ask_watch(client, watch, message="agrega las 14:00")
+
+    assert response.status_code == 200, response.text
+    assert response.json()["pendingAction"] is None
+    assert "¿Me lo repites?" in response.json()["reply"]
+    assert await _schedules(client, owner, patient_id, mine["id"]) == []
+    assert await _schedules(client, other, other_patient, foreign["id"]) == []
+
+
+async def test_watch_chat_accepts_a_null_history(
+    chat: tuple[AsyncClient, ScriptedProvider],
+) -> None:
+    client, _ = chat
+    owner, patient_id = await _patient(client)
+    watch = await _watch(client, owner, patient_id)
+
+    response = await _ask_watch(client, watch, history=None)
+
+    assert response.status_code == 200, response.text
+
+
+async def test_fake_model_adds_a_schedule_end_to_end(app_factory: AppFactory) -> None:
+    app = app_factory(pairing_poll_interval_seconds=0)
+    app.state.chat_provider = FakeChatProvider()
+    async for client in make_client(app):
+        owner, patient_id = await _patient(client)
+        medication = await _medication(client, owner, patient_id, dosage="850 mg")
+        watch = await _watch(client, owner, patient_id)
+
+        proposal = await _ask_watch(client, watch, message="Agrega las 14:00 a la metformina")
+
+        pending = proposal.json()["pendingAction"]
+        assert pending["type"] == "add_schedule", proposal.text
+        confirmed = await _confirm(client, watch, pending["id"])
+        assert confirmed.json()["actions"][0]["type"] == "schedule_added"
+        [schedule] = await _schedules(client, owner, patient_id, medication["id"])
+        assert schedule["times"] == ["14:00"]
