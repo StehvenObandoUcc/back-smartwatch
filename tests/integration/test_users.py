@@ -72,7 +72,7 @@ async def test_get_and_update_me(client: AsyncClient) -> None:
 
 
 @pytest.mark.parametrize(
-    "payload", [{}, {"displayName": None}, {"timezone": "No/Existe"}, {"locale": "en"}]
+    "payload", [{}, {"displayName": None}, {"timezone": "No/Existe"}, {"locale": "fr"}]
 )
 async def test_update_me_validates(client: AsyncClient, payload: dict[str, object]) -> None:
     session = await register(client)
@@ -133,3 +133,37 @@ async def test_set_consent_rejects_unknown_purpose(client: AsyncClient) -> None:
     )
 
     assert_problem(response, 422, "validation_error")
+
+
+async def test_locale_can_be_english(client: AsyncClient) -> None:
+    registered = await client.post(
+        "/auth/register",
+        json={
+            "email": "english@example.com",
+            "password": "contraseña-segura-123",
+            "displayName": "Ann",
+            "role": "caregiver",
+            "timezone": "America/Bogota",
+            "locale": "en",
+        },
+    )
+    assert registered.status_code == 201, registered.text
+    assert registered.json()["user"]["locale"] == "en"
+
+    session = await register(client)
+    changed = await client.patch("/users/me", headers=bearer(session), json={"locale": "en"})
+    assert changed.status_code == 200, changed.text
+    assert changed.json()["locale"] == "en"
+
+    other = await client.post(
+        "/auth/register",
+        json={
+            "email": "french@example.com",
+            "password": "contraseña-segura-123",
+            "displayName": "Anne",
+            "role": "caregiver",
+            "timezone": "America/Bogota",
+            "locale": "fr",
+        },
+    )
+    assert_problem(other, 422, "validation_error")
