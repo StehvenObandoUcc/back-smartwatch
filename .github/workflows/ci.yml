@@ -71,4 +71,4 @@ jobs:
           git show "$base:contracts/openapi.yaml" > /tmp/specs/base.yaml
           cp contracts/openapi.yaml /tmp/specs/revision.yaml
           docker run --rm -v /tmp/specs:/specs tufin/oasdiff \
-            breaking /specs/base.yaml /specs/revision.yaml --fail-on ERR
+            breaking /specs/base.yaml /specs/revision.yaml --fail-on ERR --format githubactions
