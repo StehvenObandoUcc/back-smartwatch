@@ -140,8 +140,6 @@ class ChatService:
         self._medications = MedicationRepository(session)
         self._usage = ChatUsageRepository(session)
 
-    # ─── Pasos comunes ────────────────────────────────────────────────────────
-
     async def _require_consents(self, patient_id: uuid.UUID) -> None:
         await self._consents.require(patient_id, "health_data")
         await self._consents.require(patient_id, "ai_chat")
@@ -231,8 +229,6 @@ class ChatService:
     def _turns(data: ChatRequest) -> list[Turn]:
         return [Turn(t.role, t.content) for t in data.history] + [Turn("user", data.message)]
 
-    # ─── Web: SSE ─────────────────────────────────────────────────────────────
-
     async def start_web(
         self, user: CurrentUser, patient_id: uuid.UUID, data: ChatRequest
     ) -> AsyncIterator[bytes]:
@@ -283,8 +279,6 @@ class ChatService:
             await asyncio.shield(
                 self._record_tokens(principal_id, day, usage, system, "".join(reply))
             )
-
-    # ─── Reloj: respuesta corta ───────────────────────────────────────────────
 
     async def reply_watch(self, device: CurrentDevice, data: WatchChatRequest) -> WatchChatReply:
         patient = await self._plan.get_patient(device.patient_id)
@@ -447,9 +441,8 @@ class ChatService:
     ) -> WatchChatReply:
         schedule_id = proposal.schedule_id
         if schedule_id is None:
-            # Límite: dos confirmaciones simultáneas de la misma propuesta crearían dos
-            # horarios; el reloj confirma una vez y reintenta en serie. Con un SET NX de
-            # «en curso» se cerraría si hiciera falta.
+            # Límite: dos confirmaciones simultáneas crearían dos horarios; el reloj las hace
+            # en serie. Un SET NX «en curso» lo cerraría.
             schedule = await MedicationService(self._session).add_schedule_from_device(
                 patient.id, proposal.medication_id, proposal.schedule
             )

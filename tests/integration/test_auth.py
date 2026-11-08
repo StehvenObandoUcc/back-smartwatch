@@ -21,9 +21,6 @@ def _set_cookie_header(response_headers: list[str]) -> str:
     return header
 
 
-# ─── Registro ─────────────────────────────────────────────────────────────────
-
-
 async def test_register_opens_web_session_with_refresh_cookie(client: AsyncClient) -> None:
     response = await client.post(
         "/auth/register",
@@ -96,9 +93,6 @@ async def test_validation_errors_do_not_echo_the_password(client: AsyncClient) -
     assert "secreto-xyz-123" not in response.text
 
 
-# ─── Login ────────────────────────────────────────────────────────────────────
-
-
 async def test_login_returns_access_token_and_cookie(client: AsyncClient) -> None:
     await register(client, email="login@example.com")
     client.cookies.clear()
@@ -121,9 +115,6 @@ async def test_login_rejects_bad_credentials_without_revealing_which(
     response = await client.post("/auth/login", json={"email": email, "password": "incorrecta"})
 
     assert_problem(response, 401, "invalid_credentials")
-
-
-# ─── Refresh rotativo ─────────────────────────────────────────────────────────
 
 
 async def test_refresh_rotates_cookie_and_returns_new_access_token(client: AsyncClient) -> None:
@@ -169,9 +160,6 @@ async def test_refresh_with_unknown_token_clears_cookie(client: AsyncClient) -> 
     assert "max-age=0" in _set_cookie_header(response.headers.get_list("set-cookie")).lower()
 
 
-# ─── Logout ───────────────────────────────────────────────────────────────────
-
-
 async def test_logout_revokes_session_and_clears_cookie(client: AsyncClient) -> None:
     await register(client)
     cookie = client.cookies[REFRESH_COOKIE]
@@ -186,9 +174,6 @@ async def test_logout_revokes_session_and_clears_cookie(client: AsyncClient) -> 
 
 async def test_logout_without_cookie_is_idempotent(client: AsyncClient) -> None:
     assert (await client.post("/auth/logout")).status_code == 204
-
-
-# ─── Límites de peticiones ────────────────────────────────────────────────────
 
 
 @pytest.fixture
@@ -225,9 +210,6 @@ async def test_login_is_rate_limited_per_email(strict_client: AsyncClient) -> No
         assert (await strict_client.post("/auth/login", json=credentials)).status_code == 401
 
     assert_problem(await strict_client.post("/auth/login", json=credentials), 429, "rate_limited")
-
-
-# ─── CORS ─────────────────────────────────────────────────────────────────────
 
 
 async def test_cors_allows_credentials_only_for_web_origin(client: AsyncClient) -> None:

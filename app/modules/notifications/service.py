@@ -95,8 +95,6 @@ class NotificationService:
             raise UnauthorizedError("invalid_token", "La sesión ya no es válida.")
         return user
 
-    # ─── Canales ──────────────────────────────────────────────────────────────
-
     async def list_channels(self, user_id: uuid.UUID) -> NotificationChannelList:
         user = await self._user(user_id)
         link = await self._links.get_for_user(user_id)
@@ -145,8 +143,6 @@ class NotificationService:
         await self._links.delete_for_user(user_id)
         await self._session.commit()
 
-    # ─── Preferencias ─────────────────────────────────────────────────────────
-
     async def get_preferences(self, user_id: uuid.UUID) -> NotificationPreferences:
         row = await self._prefs.get(user_id)
         if row is None:
@@ -176,8 +172,6 @@ class NotificationService:
         )
         await self._session.commit()
         return data
-
-    # ─── Webhook del bot ──────────────────────────────────────────────────────
 
     async def handle_update(self, update: dict[str, Any]) -> None:
         """Procesa una actualización de Telegram; un reintento de Telegram no duplica respuestas."""

@@ -43,9 +43,6 @@ async def _link(client: AsyncClient, inviter: Session, patient_id: str, caregive
     assert response.status_code == 201, response.text
 
 
-# ─── Registro como paciente ───────────────────────────────────────────────────
-
-
 async def test_patient_registration_creates_own_patient_record(client: AsyncClient) -> None:
     session = await register(client, role="patient", display_name="Ana", timezone="Europe/Madrid")
     patient_id = session["user"]["patientId"]
@@ -77,9 +74,6 @@ async def test_patient_own_consents_are_the_patient_record_consents(client: Asyn
     health = next(item for item in via_patient if item["purpose"] == "health_data")
     assert health["granted"] is True
     assert health["grantedBy"]["onBehalf"] is False
-
-
-# ─── Pacientes gestionados ────────────────────────────────────────────────────
 
 
 async def test_caregiver_creates_managed_patient(client: AsyncClient) -> None:
@@ -142,9 +136,6 @@ async def test_list_patients_rejects_bad_pagination(client: AsyncClient, query: 
     response = await client.get(f"/patients?{query}", headers=bearer(caregiver))
 
     assert_problem(response, 422, "validation_error")
-
-
-# ─── 404 para pacientes sin vínculo ───────────────────────────────────────────
 
 
 @pytest.mark.parametrize(
@@ -213,9 +204,6 @@ async def test_revoked_caregiver_loses_access(client: AsyncClient) -> None:
     )
 
 
-# ─── 403 por rol sobre pacientes con cuenta ───────────────────────────────────
-
-
 async def test_caregiver_cannot_edit_patient_with_account(client: AsyncClient) -> None:
     patient = await register(client, role="patient")
     caregiver = await register(client, role="caregiver")
@@ -265,9 +253,6 @@ async def test_patch_patient_validates_body(client: AsyncClient) -> None:
         assert_problem(response, 422, "validation_error")
 
 
-# ─── Consentimientos en nombre del paciente gestionado ────────────────────────
-
-
 async def test_caregiver_grants_consent_on_behalf_of_managed_patient(client: AsyncClient) -> None:
     caregiver = await register(client, role="caregiver", display_name="Luis")
     patient_id = await _managed_patient(client, caregiver)
@@ -291,9 +276,6 @@ async def test_caregiver_grants_consent_on_behalf_of_managed_patient(client: Asy
     # Los consentimientos propios del cuidador no cambian.
     own = (await client.get("/users/me/consents", headers=bearer(caregiver))).json()["items"]
     assert all(item["granted"] is False for item in own)
-
-
-# ─── Invitaciones ─────────────────────────────────────────────────────────────
 
 
 async def test_invitation_links_caregiver_once(client: AsyncClient) -> None:
@@ -402,9 +384,6 @@ async def test_invitation_guessing_is_rate_limited(strict_client: AsyncClient) -
     )
 
     assert_problem(response, 429, "rate_limited")
-
-
-# ─── Revocación de vínculos ───────────────────────────────────────────────────
 
 
 async def test_last_caregiver_of_managed_patient_cannot_leave(client: AsyncClient) -> None:

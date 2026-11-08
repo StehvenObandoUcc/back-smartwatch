@@ -76,8 +76,6 @@ class PatientService:
         self._users = UserRepository(session)
         self._consents = ConsentService(session)
 
-    # ─── Acceso ───────────────────────────────────────────────────────────────
-
     async def access(self, user: CurrentUser, patient_id: uuid.UUID) -> PatientAccess:
         patient = await self._patients.get_accessible(patient_id, user.id)
         if patient is None:
@@ -99,8 +97,6 @@ class PatientService:
                 "Este paciente tiene cuenta propia: solo él puede hacerlo.",
             )
         return access
-
-    # ─── Pacientes ────────────────────────────────────────────────────────────
 
     async def list(self, user: CurrentUser, page: Page) -> PatientPage:
         rows = await self._patients.list_accessible(user.id, page.cursor, page.limit)
@@ -141,8 +137,6 @@ class PatientService:
         await self._session.refresh(patient)
         return to_patient_out(patient)
 
-    # ─── Consentimientos del paciente ─────────────────────────────────────────
-
     async def list_consents(self, user: CurrentUser, patient_id: uuid.UUID) -> ConsentListOut:
         await self.access(user, patient_id)
         return await self._consents.list(Subject(patient_id=patient_id))
@@ -163,8 +157,6 @@ class PatientService:
                 user_id=actor.id, display_name=actor.display_name, on_behalf=access.is_caregiver
             ),
         )
-
-    # ─── Cuidadores ───────────────────────────────────────────────────────────
 
     async def list_caregivers(
         self, user: CurrentUser, patient_id: uuid.UUID, page: Page
@@ -203,8 +195,6 @@ class PatientService:
         link.revoked_at = utcnow()
         link.revoked_by_user_id = user.id
         await self._session.commit()
-
-    # ─── Invitaciones ─────────────────────────────────────────────────────────
 
     async def create_invitation(
         self, user: CurrentUser, patient_id: uuid.UUID

@@ -87,8 +87,6 @@ class DoseService:
         self._patients = PatientService(session)
         self._consents = ConsentService(session)
 
-    # ─── Subir eventos (reloj o web) ──────────────────────────────────────────
-
     async def record(self, device: CurrentDevice, batch: DoseEventBatch) -> DoseEventBatchResult:
         patient = await self._plan.get_patient(device.patient_id)
         if patient is None:
@@ -158,8 +156,6 @@ class DoseService:
             return result("duplicate")
         return result("rejected", "dose_already_recorded")
 
-    # ─── Deshacer una toma (reloj o web) ──────────────────────────────────────
-
     async def undo(self, device: CurrentDevice, event_id: uuid.UUID | None) -> None:
         await self._consents.require_health_data(device.patient_id)
         await self._delete(device.patient_id, event_id)
@@ -175,8 +171,6 @@ class DoseService:
         if event_id is not None:
             await self._events.delete(patient_id, event_id)
             await self._session.commit()
-
-    # ─── Reloj: adherencia ────────────────────────────────────────────────────
 
     async def device_adherence(
         self, device: CurrentDevice, from_: date | None, to: date | None
@@ -213,8 +207,6 @@ class DoseService:
                 "days": days,
             }
         )
-
-    # ─── Web: historial y adherencia ──────────────────────────────────────────
 
     async def _entries(
         self, user: CurrentUser, patient_id: uuid.UUID, from_: date | None, to: date | None

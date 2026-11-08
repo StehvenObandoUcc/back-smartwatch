@@ -57,9 +57,6 @@ async def _setup(client: AsyncClient) -> tuple[Any, str, dict[str, str], dict[st
     return owner, patient_id, watch, schedule, doses
 
 
-# ─── Idempotencia ─────────────────────────────────────────────────────────────
-
-
 async def test_batch_is_idempotent_by_event_id(client: AsyncClient) -> None:
     owner, patient_id, watch, _, doses = await _setup(client)
     event = _event(doses[0])
@@ -141,9 +138,6 @@ async def test_event_instants_are_compared_across_utc_offsets(client: AsyncClien
     assert response.json()["results"][0]["outcome"] == "created"
 
 
-# ─── Autorización y validación (reloj) ────────────────────────────────────────
-
-
 async def test_dose_events_require_a_watch_token(client: AsyncClient) -> None:
     owner, _, _, _, doses = await _setup(client)
 
@@ -187,9 +181,6 @@ async def test_dose_events_validate_the_body(client: AsyncClient, mutate: Any) -
     )
 
     assert_problem(response, 422, "validation_error")
-
-
-# ─── Tomas marcadas desde la web ──────────────────────────────────────────────
 
 
 async def _web_send(
@@ -274,8 +265,6 @@ async def test_web_dose_events_require_health_consent(client: AsyncClient) -> No
     )
 
 
-# ─── Autorización (web) ───────────────────────────────────────────────────────
-
 _WEB_ROUTES = ["/patients/{p}/dose-history", "/patients/{p}/adherence"]
 
 
@@ -311,9 +300,6 @@ async def test_linked_caregiver_reads_history(client: AsyncClient) -> None:
     response = await client.get(f"/patients/{patient_id}/adherence", headers=bearer(caregiver))
 
     assert response.status_code == 200
-
-
-# ─── Historial y adherencia ───────────────────────────────────────────────────
 
 
 async def _past_setup(
@@ -441,9 +427,6 @@ async def test_range_and_cursor_validation(client: AsyncClient, path: str, query
         assert_problem(response, 422, "validation_error")
 
 
-# ─── Adherencia desde el reloj ────────────────────────────────────────────────
-
-
 async def test_device_adherence_defaults_to_fourteen_days_with_zeros(client: AsyncClient) -> None:
     _, _, watch, _, _ = await _setup(client)
 
@@ -502,9 +485,6 @@ async def test_device_adherence_requires_health_consent(client: AsyncClient) -> 
     assert_problem(
         await client.get("/devices/me/adherence", headers=watch), 403, "consent_required"
     )
-
-
-# ─── Deshacer una toma ────────────────────────────────────────────────────────
 
 
 async def _history(client: AsyncClient, owner: Any, patient_id: str) -> list[Any]:

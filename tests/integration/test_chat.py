@@ -127,9 +127,6 @@ async def _usage(db: AsyncEngine) -> list[dict[str, Any]]:
         return [dict(row._mapping) for row in rows]
 
 
-# ─── Web: SSE ─────────────────────────────────────────────────────────────────
-
-
 async def test_web_chat_streams_sse_events_and_counts_tokens(
     chat: tuple[AsyncClient, ScriptedProvider], db_engine: AsyncEngine
 ) -> None:
@@ -200,9 +197,6 @@ async def test_a_caregiver_can_chat_about_a_linked_patient(
     response = await _ask(client, caregiver, patient_id)
 
     assert response.status_code == 200
-
-
-# ─── Autorización y consentimientos ───────────────────────────────────────────
 
 
 async def test_web_chat_authorization_and_consents(
@@ -289,9 +283,6 @@ async def test_chat_validates_the_body(
     assert provider.calls == []
 
 
-# ─── Cupo diario y límite por minuto ──────────────────────────────────────────
-
-
 async def test_daily_limit_is_per_user_and_counts_down(
     chat: tuple[AsyncClient, ScriptedProvider],
 ) -> None:
@@ -349,9 +340,6 @@ async def test_per_minute_rate_limit(app_factory: AppFactory) -> None:
         assert codes == [200, 200, 429]
 
 
-# ─── Fallos del proveedor ─────────────────────────────────────────────────────
-
-
 async def test_provider_failing_up_front_is_a_503_that_returns_the_message(
     chat: tuple[AsyncClient, ScriptedProvider], db_engine: AsyncEngine
 ) -> None:
@@ -401,9 +389,6 @@ async def test_tokens_are_estimated_when_the_provider_reports_none(
     assert usage["output_tokens"] > 0
 
 
-# ─── Reloj: respuesta corta ───────────────────────────────────────────────────
-
-
 async def test_watch_chat_returns_a_short_plain_reply(
     chat: tuple[AsyncClient, ScriptedProvider], db_engine: AsyncEngine
 ) -> None:
@@ -428,7 +413,7 @@ async def test_watch_chat_returns_a_short_plain_reply(
         "actions": [],
     }
     call = provider.calls[0]
-    assert call["max_tokens"] == 700  # idem; la brevedad la fija el prompt
+    assert call["max_tokens"] == 700  # incluye el razonamiento; la brevedad la fija el prompt
     assert "25 palabras" in call["system"]
     assert "Metformina" in call["system"]
     [usage] = await _usage(db_engine)
@@ -461,8 +446,6 @@ async def test_an_unpaired_watch_cannot_chat(chat: tuple[AsyncClient, ScriptedPr
     assert_problem(await _ask_watch(client, watch), 401, "device_unpaired")
     assert provider.calls == []
 
-
-# ─── Reloj: agregar un medicamento por voz ────────────────────────────────────
 
 LOSARTAN = ToolCall(
     "create_medication", '{"name": "Losartán", "dosage": "50 mg", "times": ["08:00"]}'
@@ -608,9 +591,6 @@ async def test_web_chat_gets_no_tools(chat: tuple[AsyncClient, ScriptedProvider]
     await _ask(client, owner, patient_id)
 
     assert provider.calls[0]["tools"] is None
-
-
-# ─── Agregar un horario a un medicamento existente ───────────────────────────
 
 
 def _add_schedule(medication_id: str, times: list[str]) -> ToolCall:

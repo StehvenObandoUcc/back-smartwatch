@@ -37,8 +37,6 @@ class ReportProcessor:
         self._web = settings.web_origin
         self._batch = settings.report_batch_size
 
-    # ─── Reportes semanales ───────────────────────────────────────────────────
-
     async def create_weekly(self, now: datetime | None = None) -> int:
         """Crea (pendiente) el reporte de la última semana cerrada de cada paciente con horarios.
 
@@ -68,8 +66,6 @@ class ReportProcessor:
                     created += 1
                 await session.commit()
         return created
-
-    # ─── Generación ───────────────────────────────────────────────────────────
 
     async def process_pending(self, now: datetime | None = None) -> int:
         """Genera hasta `report_batch_size` reportes pendientes; devuelve cuántos se procesaron."""

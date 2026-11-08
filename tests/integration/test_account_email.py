@@ -43,9 +43,6 @@ async def _verify(client: AsyncClient, db: AsyncEngine, email: str) -> None:
     assert (await client.post("/auth/verify-email", json={"token": token})).status_code == 204
 
 
-# ─── Verificación de correo ───────────────────────────────────────────────────
-
-
 async def test_register_queues_verification_email(
     client: AsyncClient, db_engine: AsyncEngine
 ) -> None:
@@ -127,9 +124,6 @@ async def test_resend_when_already_verified_sends_nothing(
 
 async def test_resend_requires_a_user_session(client: AsyncClient) -> None:
     assert_problem(await client.post("/auth/resend-verification"), 401, "missing_token")
-
-
-# ─── Recuperación de contraseña ───────────────────────────────────────────────
 
 
 async def test_forgot_password_answers_the_same_for_any_email(

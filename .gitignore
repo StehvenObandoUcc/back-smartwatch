@@ -1,4 +1,4 @@
-# Configuración local de Claude (CLAUDE.md sí se versiona)
+# Configuración local de herramientas de desarrollo
 .claude/settings.local.json
 
 # Python
@@ -24,5 +24,4 @@ dist/
 .DS_Store
 Thumbs.db
 
-# Instrucciones locales del asistente (no forman parte del proyecto)
 CLAUDE.md

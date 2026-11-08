@@ -1,4 +1,4 @@
-"""Worker de arq: entrega el outbox (correo y, después, Telegram) y las tareas programadas.
+"""Worker de arq: entrega el outbox (correo y Telegram) y las tareas programadas.
 
 Arranque: `uv run python -m arq app.worker.main.WorkerSettings`.
 """

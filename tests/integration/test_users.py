@@ -17,9 +17,6 @@ def _device_token(app: FastAPI) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
 
 
-# ─── Autenticación y tipo de token ────────────────────────────────────────────
-
-
 async def test_me_requires_token(client: AsyncClient) -> None:
     response = await client.get("/users/me")
 
@@ -52,9 +49,6 @@ async def test_device_token_is_rejected_outside_devices_me(
         assert_problem(response, 403, "wrong_token_type")
 
 
-# ─── Perfil ───────────────────────────────────────────────────────────────────
-
-
 async def test_get_and_update_me(client: AsyncClient) -> None:
     session = await register(client, display_name="Ana")
 
@@ -80,9 +74,6 @@ async def test_update_me_validates(client: AsyncClient, payload: dict[str, objec
     response = await client.patch("/users/me", headers=bearer(session), json=payload)
 
     assert_problem(response, 422, "validation_error")
-
-
-# ─── Consentimientos propios ──────────────────────────────────────────────────
 
 
 async def test_consents_default_to_not_granted(client: AsyncClient) -> None:
