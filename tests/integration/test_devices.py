@@ -62,9 +62,6 @@ async def _refresh_watch(client: AsyncClient, refresh_token: str) -> Any:
     )
 
 
-# ─── Flujo de vinculación ─────────────────────────────────────────────────────
-
-
 async def test_full_pairing_flow(client: AsyncClient) -> None:
     patient = await register(client, role="patient")
     patient_id = patient["user"]["patientId"]
@@ -187,9 +184,6 @@ async def test_token_request_is_validated(client: AsyncClient, body: dict[str, s
     assert_problem(await client.post("/devices/token", json=body), 422, "validation_error")
 
 
-# ─── Un solo reloj activo por paciente ────────────────────────────────────────
-
-
 async def test_new_watch_replaces_previous_one(client: AsyncClient) -> None:
     patient = await register(client, role="patient")
     patient_id = patient["user"]["patientId"]
@@ -202,9 +196,6 @@ async def test_new_watch_replaces_previous_one(client: AsyncClient) -> None:
     assert (await client.get("/devices/me", headers=_watch(new))).status_code == 200
     listed = (await client.get(f"/patients/{patient_id}/devices", headers=bearer(patient))).json()
     assert [d["id"] for d in listed["items"]] == [new["device"]["id"]]
-
-
-# ─── Tokens del reloj ─────────────────────────────────────────────────────────
 
 
 async def test_watch_refresh_rotates_and_detects_reuse(client: AsyncClient) -> None:
@@ -377,9 +368,6 @@ async def test_user_token_cannot_unpair_through_devices_me(client: AsyncClient) 
     assert (await client.get("/devices/me", headers=_watch(watch))).status_code == 200
 
 
-# ─── Gestión desde la web ─────────────────────────────────────────────────────
-
-
 async def test_unpair_revokes_watch_immediately(client: AsyncClient) -> None:
     patient = await register(client, role="patient")
     watch = await _paired_watch(client, patient, patient["user"]["patientId"])
@@ -418,9 +406,6 @@ async def test_list_devices_of_unlinked_patient_is_404(client: AsyncClient) -> N
     )
 
     assert_problem(response, 404, "patient_not_found")
-
-
-# ─── Límites en los códigos ───────────────────────────────────────────────────
 
 
 @pytest.fixture

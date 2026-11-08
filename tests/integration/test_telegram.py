@@ -82,9 +82,6 @@ async def _replies(db: AsyncEngine) -> list[tuple[str, int]]:
         return [(row[0], row[1]) for row in rows]
 
 
-# ─── Webhook: secret_token ────────────────────────────────────────────────────
-
-
 @pytest.mark.parametrize("secret", [None, "", "otro-secreto-0123456789", SECRET + "x", SECRET[:-1]])
 async def test_webhook_rejects_a_missing_or_wrong_secret(
     client: AsyncClient, db_engine: AsyncEngine, secret: str | None
@@ -126,9 +123,6 @@ async def test_webhook_ignores_what_it_does_not_understand(
 ) -> None:
     assert (await _webhook(client, update)).status_code == 200
     assert await _replies(db_engine) == []
-
-
-# ─── Vinculación ──────────────────────────────────────────────────────────────
 
 
 async def test_link_flow_links_the_chat_and_confirms_by_outbox(
@@ -282,9 +276,6 @@ async def test_link_requests_are_rate_limited(app_factory: AppFactory) -> None:
         assert codes == [201, 201, 429]
 
 
-# ─── Canales: correo y autenticación ──────────────────────────────────────────
-
-
 async def test_channel_list_always_has_both_channels_with_a_masked_email(
     client: AsyncClient,
 ) -> None:
@@ -352,8 +343,6 @@ async def test_channels_are_per_user(client: AsyncClient) -> None:
     await client.delete("/users/me/notification-channels/telegram", headers=bearer(luis))
     assert (await _telegram_channel(client, ana))["linked"] is True
 
-
-# ─── Preferencias ─────────────────────────────────────────────────────────────
 
 ALL_ON = {
     "missedDose": {"email": True, "telegram": True},

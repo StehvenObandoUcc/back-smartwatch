@@ -41,14 +41,12 @@ class Settings(BaseSettings):
     # Origen del panel web: único origen con CORS y credenciales (cookie de refresh).
     web_origin: str = "http://localhost:5173"
 
-    # Tokens
     jwt_secret: SecretStr
     jwt_issuer: str = "back-smartwatch"
     access_token_ttl_seconds: int = 900
     user_refresh_ttl_days: int = 30
     device_refresh_idle_days: int = 90
 
-    # Correos de cuenta
     email_verify_ttl_hours: int = 24
     password_reset_ttl_minutes: int = 60
 
@@ -83,7 +81,6 @@ class Settings(BaseSettings):
     chat_web_max_tokens: int = 1500
     chat_watch_max_tokens: int = 700
 
-    # Avisos y reportes
     missed_alert_lookback_hours: int = 6
     report_batch_size: int = 10
 
@@ -152,4 +149,4 @@ class Settings(BaseSettings):
 
 @lru_cache
 def get_settings() -> Settings:
-    return Settings()  # campos obligatorios salen del entorno
+    return Settings()

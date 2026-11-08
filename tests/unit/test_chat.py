@@ -41,9 +41,6 @@ def _dose(
     )
 
 
-# ─── Prompt ───────────────────────────────────────────────────────────────────
-
-
 def test_prompt_lists_doses_with_local_time_and_status() -> None:
     prompt = build_system_prompt(
         NOW, [_dose(8, "tomada"), _dose(20, note="con comida"), _dose(8, day=8)], short=False
@@ -101,9 +98,6 @@ def test_prompt_caps_the_number_of_doses() -> None:
     assert build_system_prompt(NOW, doses, short=False).count("— pendiente") == 40
 
 
-# ─── Respuesta corta del reloj ────────────────────────────────────────────────
-
-
 def test_watch_reply_is_plain_text_of_at_most_three_sentences() -> None:
     text = "**Esta noche** toca la metformina. A las 20:00.\n- Con comida.\n- Sin prisa. Una más."
 
@@ -122,9 +116,6 @@ def test_watch_reply_is_capped_at_forty_words() -> None:
 
     assert len(words) == 40
     assert words[-1] == "palabra39…"
-
-
-# ─── Proveedores ──────────────────────────────────────────────────────────────
 
 
 async def test_fake_provider_streams_words_and_usage() -> None:
@@ -250,9 +241,6 @@ async def test_stream_event_defaults() -> None:
     assert StreamEvent().text is None
 
 
-# ─── Configuración ────────────────────────────────────────────────────────────
-
-
 def test_deepseek_requires_its_key() -> None:
     with pytest.raises(ValidationError, match="DEEPSEEK_API_KEY"):
         _settings(chat_provider="deepseek")
@@ -273,9 +261,6 @@ def test_placeholder_problem_type_base_is_refused_in_production() -> None:
             chat_provider="deepseek",
             deepseek_api_key="sk-x",
         )
-
-
-# ─── Acciones del asistente en el reloj ───────────────────────────────────────
 
 
 @pytest.mark.parametrize(

@@ -85,9 +85,6 @@ async def _pair_watch(client: AsyncClient, user: Session, patient_id: str) -> di
     return {"Authorization": f"Bearer {tokens.json()['accessToken']}"}
 
 
-# ─── Paciente con cuenta ──────────────────────────────────────────────────────
-
-
 async def test_patient_deletes_account_and_loses_session_and_data(
     client: AsyncClient, db_engine: AsyncEngine
 ) -> None:
@@ -159,9 +156,6 @@ async def test_patient_with_watch_loses_watch_and_chat_usage(
     assert await _scalar(db_engine, "SELECT count(*) FROM devices") == 0
     remaining = await _scalar(db_engine, "SELECT array_agg(principal_id::text) FROM chat_usage")
     assert remaining == [other["user"]["id"]]
-
-
-# ─── Cuidadores y pacientes gestionados ───────────────────────────────────────
 
 
 async def test_sole_caregiver_deletes_managed_patient(
@@ -246,9 +240,6 @@ async def test_inactive_link_does_not_keep_managed_patient_alive(
     assert await _scalar(db_engine, "SELECT count(*) FROM patients") == 0
 
 
-# ─── Contraseña, validación y límite ──────────────────────────────────────────
-
-
 async def test_wrong_password_is_forbidden_and_deletes_nothing(
     client: AsyncClient, db_engine: AsyncEngine
 ) -> None:
@@ -287,9 +278,6 @@ async def test_delete_is_rate_limited_before_checking_password(app_factory: AppF
 
         assert_problem(response, 429, "rate_limited")
         assert 0 < int(response.headers["retry-after"]) <= 60
-
-
-# ─── Notificaciones sin enviar ────────────────────────────────────────────────
 
 
 async def test_pending_outbox_for_the_user_is_removed(

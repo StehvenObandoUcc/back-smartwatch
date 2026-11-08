@@ -81,8 +81,6 @@ class DeviceService:
         self._patients = PatientService(session)
         self._refresh_lifetime = timedelta(days=settings.device_refresh_idle_days)
 
-    # ─── Paso 1: el reloj pide un código ──────────────────────────────────────
-
     async def create_pairing_code(self, data: PairingCodeRequest) -> PairingCodeOut:
         now = utcnow()
         device_code = new_opaque_token()
@@ -111,8 +109,6 @@ class DeviceService:
                 interval=pairing.interval_seconds,
             )
         raise ConflictError("pairing_code_collision", "No se pudo generar un código. Reinténtalo.")
-
-    # ─── Paso 2: la web confirma ──────────────────────────────────────────────
 
     async def confirm(self, user: CurrentUser, code: str, patient_id: uuid.UUID) -> DeviceOut:
         code = code.upper()
@@ -144,8 +140,6 @@ class DeviceService:
         pairing.device_id = device.id
         await self._session.commit()
         return to_device_out(device)
-
-    # ─── Paso 3: el reloj obtiene o renueva sus tokens ────────────────────────
 
     async def token(self, grant: DeviceCodeGrant | DeviceRefreshGrant) -> TokenPairOut:
         if isinstance(grant, DeviceCodeGrant):
@@ -213,8 +207,6 @@ class DeviceService:
             access_token=access, refresh_token=refresh, expires_in=self._access.ttl_seconds
         )
 
-    # ─── El reloj autenticado ─────────────────────────────────────────────────
-
     async def _current(self, current: CurrentDevice) -> Device:
         device = await self._devices.get_active(current.id)
         if device is None:
@@ -241,8 +233,6 @@ class DeviceService:
         device = await self._current(current)
         device.push_token = token
         await self._session.commit()
-
-    # ─── Gestión desde la web ─────────────────────────────────────────────────
 
     async def list_for_patient(
         self, user: CurrentUser, patient_id: uuid.UUID, page: Page

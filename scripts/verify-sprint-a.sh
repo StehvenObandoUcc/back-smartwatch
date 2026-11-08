@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Recorrido completo del sprint A contra la API local, solo con curl.
+# Recorrido completo (cuidador, paciente, reloj, plan y eventos) contra la API local, solo con curl.
 # Uso: bash scripts/verify-sprint-a.sh        (BASE_URL=http://localhost:8000 por defecto)
 # Cada paso imprime OK o FALLÓ; al primer fallo se detiene con código 1.
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -12,30 +12,30 @@ YESTERDAY="$("$PY" -c 'from datetime import datetime, timedelta, timezone; print
 echo "Verificando el sprint A contra $BASE"
 echo
 
-# 0. API arriba y con sus dependencias
+# API arriba y con sus dependencias
 request GET /health/ready
 [ "$STATUS" = "200" ] || fail "La API responde y ve Postgres y Redis (GET /health/ready)" "¿está arrancada la API y levantados Postgres y Redis?"
 ok "La API responde y ve Postgres y Redis"
 
-# 1. Cuidador
+# Cuidador
 request POST /auth/register "{\"email\":\"$EMAIL\",\"password\":\"$PASSWORD\",\"displayName\":\"Luis\",\"role\":\"caregiver\",\"timezone\":\"America/Bogota\"}"
 [ "$STATUS" = "201" ] || fail "Registrar un cuidador"
 need_json "Registrar un cuidador" tokens.accessToken
 TOKEN="$VALUE"
 ok "Registrar un cuidador ($EMAIL)"
 
-# 2. Paciente gestionado
+# Paciente gestionado
 request POST /patients '{"displayName":"Abuela","timezone":"America/Bogota"}' "$TOKEN"
 [ "$STATUS" = "201" ] || fail "Crear un paciente gestionado"
 need_json "Crear un paciente gestionado" id
 PATIENT="$VALUE"
 ok "Crear un paciente gestionado"
 
-# 3. Consentimiento
+# Consentimiento
 request PUT "/patients/$PATIENT/consents/health_data" '{"granted":true,"version":"2026-10"}' "$TOKEN"
 expect_eq "Otorgar el consentimiento health_data en nombre del paciente" "200" "$STATUS"
 
-# 4. Medicamento y horario
+# Medicamento y horario
 request POST "/patients/$PATIENT/medications" '{"name":"Metformina","dosage":"1 tableta","instructions":"Con comida"}' "$TOKEN"
 [ "$STATUS" = "201" ] || fail "Crear un medicamento"
 need_json "Crear un medicamento" id
@@ -49,7 +49,7 @@ need_json "Crear un horario diario a las 08:00 y 20:00" id
 SCHEDULE="$VALUE"
 ok "Crear un horario diario a las 08:00 y 20:00"
 
-# 5. Vincular el reloj (lo que haría el emulador): código, confirmación desde la web, token
+# Vincular el reloj (lo que haría el emulador): código, confirmación desde la web, token
 request POST /devices/pairing-codes '{"model":"Script de verificacion"}'
 [ "$STATUS" = "201" ] || fail "El reloj pide un código de vinculación"
 need_json "El reloj pide un código de vinculación" code
@@ -67,7 +67,7 @@ need_json "El reloj recibe sus tokens" accessToken
 WATCH="$VALUE"
 ok "El reloj recibe sus tokens"
 
-# 6. Plan con ETag
+# Plan con ETag
 request GET /devices/me/plan "" "$WATCH"
 [ "$STATUS" = "200" ] || fail "El reloj descarga el plan"
 ETAG="$(grep -i '^etag:' "$HDRS" | tr -d '\r' | sed 's/^[Ee][Tt][Aa][Gg]: *//')"
@@ -85,7 +85,7 @@ expect_eq "Con If-None-Match igual responde 304" "304" "$STATUS"
 [ -z "$BODY" ] || fail "El 304 no trae cuerpo" "cuerpo recibido: $(printf '%s' "$BODY" | head -c 300)"
 ok "El 304 no trae cuerpo"
 
-# 7. Lote de eventos idempotente
+# Lote de eventos idempotente
 EVENT_ID="$("$PY" -c 'import uuid; print(uuid.uuid4())')"
 EVENTS="{\"events\":[{\"eventId\":\"$EVENT_ID\",\"scheduleId\":\"$SCHEDULE\",\"scheduledAt\":\"$SCHEDULED_AT\",\"status\":\"TAKEN\",\"actedAt\":\"$SCHEDULED_AT\"}]}"
 
@@ -97,7 +97,7 @@ request POST /devices/me/dose-events "$EVENTS" "$WATCH"
 [ "$STATUS" = "200" ] || fail "El reloj reenvía el mismo lote"
 expect_eq "Reenviar el lote da duplicate (sin duplicar la toma)" "duplicate" "$(jget results.0.outcome)"
 
-# 8. Historial y adherencia (lo que verá la web)
+# Historial y adherencia (lo que verá la web)
 request GET "/patients/$PATIENT/dose-history" "" "$TOKEN"
 [ "$STATUS" = "200" ] || fail "El cuidador consulta el historial"
 expect_eq "El historial muestra la toma como TAKEN" "TAKEN" "$(jget items.0.status)"

@@ -1,4 +1,4 @@
-"""baseline vacía de la fase 0
+"""baseline vacía
 
 Revision ID: 0001
 Revises:

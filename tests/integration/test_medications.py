@@ -94,8 +94,6 @@ async def _plan(client: AsyncClient, headers: dict[str, str]) -> Any:
     return await client.get("/devices/me/plan", headers=headers)
 
 
-# ─── Autorización ─────────────────────────────────────────────────────────────
-
 _PATIENT_ROUTES = [
     ("GET", "/patients/{p}/medications", None),
     ("POST", "/patients/{p}/medications", {"name": "X", "dosage": "1"}),
@@ -223,9 +221,6 @@ async def test_revoked_caregiver_loses_access_to_medications(client: AsyncClient
     assert_problem(await client.get(url, headers=bearer(caregiver)), 404, "patient_not_found")
 
 
-# ─── Consentimiento health_data ───────────────────────────────────────────────
-
-
 async def test_health_consent_is_required_for_user_and_watch(client: AsyncClient) -> None:
     owner, patient_id = await _patient(client, consent=False)
     watch = await _watch(client, owner, patient_id)
@@ -253,9 +248,6 @@ async def test_withdrawing_consent_blocks_again(client: AsyncClient) -> None:
     response = await client.get(f"/patients/{patient_id}/medications", headers=bearer(owner))
 
     assert_problem(response, 403, "consent_required")
-
-
-# ─── CRUD ─────────────────────────────────────────────────────────────────────
 
 
 async def test_medication_crud_and_archive(client: AsyncClient) -> None:
@@ -349,9 +341,6 @@ async def test_schedule_validation_rules(client: AsyncClient) -> None:
         json={"times": ["08:00"], "daysOfWeek": [1], "startDate": str(today)},
     )
     assert_problem(eleventh, 422, "validation_error")
-
-
-# ─── Plan: generación, versión y ETag ─────────────────────────────────────────
 
 
 async def test_plan_for_daily_schedule_covers_seven_days(client: AsyncClient) -> None:
@@ -457,9 +446,6 @@ async def test_unpaired_watch_cannot_read_plan(client: AsyncClient) -> None:
     await client.delete(f"/devices/{device_id}", headers=bearer(owner))
 
     assert_problem(await _plan(client, watch), 401, "device_unpaired")
-
-
-# ─── Medicamentos creados desde el reloj ──────────────────────────────────────
 
 
 def _watch_medication(**overrides: Any) -> dict[str, Any]:

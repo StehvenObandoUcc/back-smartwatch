@@ -29,7 +29,7 @@ Recuerda ayuda a una persona a tomar su medicación a tiempo y permite que sus c
 
 | Parte | Repositorio | Qué hace |
 | --- | --- | --- |
-| **Reloj Wear OS** | [front-smartwatch](https://github.com/StehvenObandoUcc/front-smartwatch) (`wear/`) | App independiente, sin app de teléfono. Suena a la hora de cada dosis, registra si se tomó, se pospuso o se omitió, y tiene un asistente por voz. Funciona sin conexión con el plan de 7 días descargado. |
+| **Reloj Wear OS** | [front-smartwatch](https://github.com/StehvenObandoUcc/front-smartwatch) (`wear/`) | App independiente, sin app de teléfono. Suena a la hora de cada dosis, registra si se tomó, se pospuso o se omitió, y tiene un asistente por voz. Funciona sin conexión con el plan de 7 días descargado. El APK está en sus [releases](https://github.com/StehvenObandoUcc/front-smartwatch/releases/latest). |
 | **Panel web** | [front-smartwatch](https://github.com/StehvenObandoUcc/front-smartwatch) (`web/`) | El paciente o su cuidador carga medicamentos y horarios, vincula el reloj, consulta la adherencia, descarga reportes y configura los avisos. |
 | **Backend** | este repositorio | API REST que guarda todo, genera el plan de dosis, envía avisos por correo y Telegram, crea reportes PDF y conecta el asistente de IA. |
 

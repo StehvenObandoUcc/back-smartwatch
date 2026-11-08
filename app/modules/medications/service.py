@@ -88,8 +88,6 @@ class MedicationService:
             raise medication_not_found()
         return medication
 
-    # ─── Medicamentos ─────────────────────────────────────────────────────────
-
     async def list(
         self, user: CurrentUser, patient_id: uuid.UUID, include_archived: bool, page: Page
     ) -> MedicationPage:
@@ -148,8 +146,6 @@ class MedicationService:
         medication.updated_at = now
         await self._medications.bump_plan_version(patient_id)
         await self._session.commit()
-
-    # ─── Desde el reloj ───────────────────────────────────────────────────────
 
     async def create_from_device(
         self, patient_id: uuid.UUID, data: DeviceMedicationCreate
@@ -235,8 +231,6 @@ class MedicationService:
         )
         self._medications.add(schedule)
         return schedule
-
-    # ─── Horarios ─────────────────────────────────────────────────────────────
 
     async def list_schedules(
         self, user: CurrentUser, patient_id: uuid.UUID, medication_id: uuid.UUID

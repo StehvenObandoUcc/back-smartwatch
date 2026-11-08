@@ -54,9 +54,6 @@ async def _week_of_events(db: AsyncEngine, scenario: Scenario, monday: str = "20
         await record_event(db, scenario, f"{first + timedelta(days=offset)}T08:00:00-05:00", status)
 
 
-# ─── Reportes semanales ───────────────────────────────────────────────────────
-
-
 async def test_weekly_report_is_created_on_monday_at_8_local(
     client: AsyncClient, db_engine: AsyncEngine, integration_settings: Settings
 ) -> None:
@@ -105,9 +102,6 @@ async def test_weekly_period_follows_the_patient_timezone(
     # 13:00 UTC del lunes ya es lunes 22:00 en Tokio: ya toca; 22:59 UTC del domingo no.
     assert await processor.create_weekly(datetime(2026, 10, 11, 22, 59, tzinfo=UTC)) == 0
     assert await processor.create_weekly(datetime(2026, 10, 11, 23, 0, tzinfo=UTC)) == 1
-
-
-# ─── Generación y avisos ──────────────────────────────────────────────────────
 
 
 async def test_processing_computes_the_summary_and_the_pdf(
@@ -260,9 +254,6 @@ async def test_unicode_names_do_not_break_the_pdf(
     assert (await _reports(db_engine))[0]["status"] == "ready"
 
 
-# ─── API ──────────────────────────────────────────────────────────────────────
-
-
 async def test_create_report_is_asynchronous_and_idempotent_by_period(
     client: AsyncClient, db_engine: AsyncEngine
 ) -> None:
@@ -352,9 +343,6 @@ async def test_list_reports_newest_first_with_cursor(
     assert [r["periodEnd"] for r in first["items"]] == [PAST_END, "2026-09-20"]
     assert [r["periodEnd"] for r in second["items"]] == ["2026-09-13"]
     assert second["nextCursor"] is None
-
-
-# ─── Autorización ─────────────────────────────────────────────────────────────
 
 
 async def test_report_routes_authorization(client: AsyncClient, db_engine: AsyncEngine) -> None:

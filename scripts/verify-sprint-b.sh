@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Recorrido del sprint B contra la API local, sin claves reales de Resend, Telegram ni DeepSeek.
+# Recorrido de correo, Telegram, alertas, reportes y chat contra la API local, sin claves reales de Resend, Telegram ni DeepSeek.
 # Uso: bash scripts/verify-sprint-b.sh        (BASE_URL=http://localhost:8000 por defecto)
 # Lee los enlaces de los correos de la tabla notifications_outbox (docker compose debe estar arriba).
 # Con VERIFY_WORKER=1 comprueba además que el worker entrega el correo (arráncalo antes con
@@ -40,7 +40,7 @@ request GET /health/ready
 [ "$STATUS" = "200" ] || fail "La API responde y ve Postgres y Redis" "¿está arrancada la API y levantados Postgres y Redis?"
 ok "La API responde y ve Postgres y Redis"
 
-# ── Paso 1: verificación de correo y recuperación de contraseña ───────────────
+# Verificación de correo y recuperación de contraseña
 request POST /auth/register "{\"email\":\"$EMAIL\",\"password\":\"$PASSWORD\",\"displayName\":\"Luis\",\"role\":\"caregiver\",\"timezone\":\"America/Bogota\"}"
 [ "$STATUS" = "201" ] || fail "Registrar un cuidador"
 need_json "Registrar un cuidador" tokens.accessToken
@@ -94,7 +94,7 @@ expect_eq "La contraseña vieja ya no entra (401)" "401" "$STATUS"
 request POST /auth/login "{\"email\":\"$EMAIL\",\"password\":\"$NEW_PASSWORD\"}"
 expect_eq "La contraseña nueva sí entra (200)" "200" "$STATUS"
 
-# ── Paso 3: Telegram (el script hace de Telegram: llama al webhook con el secret_token) ───────
+# Telegram: el script hace de Telegram y llama al webhook con el secret_token
 env_or_dotenv() { # NOMBRE: valor de la variable de entorno o, si no, de .env
   local value="${!1:-}"
   [ -n "$value" ] || value="$(grep -E "^$1=" .env 2>/dev/null | head -1 | cut -d= -f2- | tr -d '\r')"
@@ -151,7 +151,7 @@ request GET /users/me/notification-preferences "" "$TOKEN"
 expect_eq "Las preferencias guardadas se leen igual (weeklyReport.email)" "true" "$(jget weeklyReport.email)"
 expect_eq "Las preferencias guardadas se leen igual (weeklyReport.telegram)" "false" "$(jget weeklyReport.telegram)"
 
-# ── Paso 4: alerta de dosis omitida y reporte semanal ───────────────────────────────────────────
+# Alerta de dosis omitida y reporte semanal
 skip() { STEP=$((STEP + 1)); printf 'OMITIDO %2d. %s\n' "$STEP" "$1"; }
 
 request PUT /users/me/consents/notifications '{"granted":true,"version":"2026-10"}' "$TOKEN"
@@ -215,7 +215,7 @@ else
   skip "Generación del reporte y PDF (la hace el worker: usa VERIFY_WORKER=1)"
 fi
 
-# ── Paso 5: chat con IA (CHAT_PROVIDER=fake: responde sin red ni clave) ─────────────────────────
+# Chat con IA: CHAT_PROVIDER=fake responde sin red ni clave
 request POST "/patients/$PATIENT/chat/messages" '{"message":"Que me toca esta noche?"}' "$TOKEN"
 expect_eq "Sin consentimiento ai_chat el chat responde 403" "403" "$STATUS"
 expect_eq "El código es consent_required" "consent_required" "$(jget code)"

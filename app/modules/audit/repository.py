@@ -26,7 +26,7 @@ class AccessLogRepository:
         self._session = session
 
     async def add(self, entry: AccessEntry) -> None:
-        """Inserta el acceso. No hace commit."""
+        """No hace commit."""
         await self._session.execute(
             insert(HealthDataAccess).values(
                 actor_type=entry.actor_type,
