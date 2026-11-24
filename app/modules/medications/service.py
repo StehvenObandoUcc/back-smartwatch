@@ -19,6 +19,7 @@ from app.modules.medications.models import Medication, Schedule
 from app.modules.medications.repository import MedicationRepository, ScheduleRepository
 from app.modules.medications.schemas import (
     MAX_SCHEDULES_PER_MEDICATION,
+    Days,
     DeviceMedicationCreate,
     MedicationCreate,
     MedicationOut,
@@ -29,6 +30,7 @@ from app.modules.medications.schemas import (
     ScheduleList,
     ScheduleOut,
     ScheduleUpdate,
+    Times,
 )
 from app.modules.patients.service import PatientService
 
@@ -202,6 +204,63 @@ class MedicationService:
                 f"Un medicamento admite como máximo {MAX_SCHEDULES_PER_MEDICATION} horarios",
             )
         schedule = self._new_schedule(medication_id, data)
+        await self._medications.bump_plan_version(patient_id)
+        await self._session.commit()
+        return schedule
+
+    async def _device_medication(
+        self, patient_id: uuid.UUID, medication_id: uuid.UUID
+    ) -> Medication:
+        """Medicamento activo del paciente del reloj; archivado o ajeno es 404."""
+        await self._consents.require(patient_id, "health_data")
+        medication = await self._medications.get(patient_id, medication_id)
+        if medication is None or medication.archived_at is not None:
+            raise medication_not_found()
+        return medication
+
+    async def update_dosage_from_device(
+        self, patient_id: uuid.UUID, medication_id: uuid.UUID, dosage: str
+    ) -> Medication:
+        """Cambia la dosis por toma, con el acceso que da el token del reloj."""
+        medication = await self._device_medication(patient_id, medication_id)
+        medication.dosage = dosage
+        medication.updated_at = utcnow()
+        await self._medications.bump_plan_version(patient_id)
+        await self._session.commit()
+        return medication
+
+    async def archive_from_device(self, patient_id: uuid.UUID, medication_id: uuid.UUID) -> None:
+        """Deja de recordar el medicamento. Se archiva: su historial se conserva."""
+        medication = await self._device_medication(patient_id, medication_id)
+        now = utcnow()
+        medication.archived_at = now
+        medication.updated_at = now
+        await self._medications.bump_plan_version(patient_id)
+        await self._session.commit()
+
+    async def replace_times_from_device(
+        self,
+        patient_id: uuid.UUID,
+        medication_id: uuid.UUID,
+        times: Times,
+        days: Days,
+        today: date,
+    ) -> Schedule:
+        """Deja el medicamento con un solo horario de esas horas y días: edita el primero y quita
+        los demás. Las tomas ya registradas no se pierden (no dependen del horario)."""
+        medication = await self._device_medication(patient_id, medication_id)
+        schedules = await self._schedules.list(medication.id)
+        if not schedules:
+            schedule = self._new_schedule(
+                medication.id, ScheduleCreate(times=times, days_of_week=days, start_date=today)
+            )
+        else:
+            schedule, *rest = schedules
+            schedule.times = times
+            schedule.days_of_week = days
+            schedule.effective_from = utcnow()
+            for extra in rest:
+                await self._schedules.delete(medication.id, extra.id)
         await self._medications.bump_plan_version(patient_id)
         await self._session.commit()
         return schedule

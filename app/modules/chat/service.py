@@ -15,7 +15,7 @@ import json
 import uuid
 from collections.abc import AsyncIterator
 from datetime import UTC, date, datetime, timedelta
-from typing import Any
+from typing import Any, Literal
 from zoneinfo import ZoneInfo
 
 from pydantic import ValidationError
@@ -29,10 +29,11 @@ from app.core.logging import get_logger
 from app.core.rate_limit import RateLimiter
 from app.core.security import utcnow
 from app.modules.chat.prompt import (
-    ADD_SCHEDULE_TOOL,
-    CREATE_MEDICATION_TOOL,
     MAX_MEDICATIONS_IN_CONTEXT,
+    WATCH_TOOLS,
     Lang,
+    PromptAdherence,
+    PromptCounts,
     PromptDose,
     PromptMedication,
     build_system_prompt,
@@ -50,16 +51,21 @@ from app.modules.chat.provider import (
 )
 from app.modules.chat.repository import ChatUsageRepository
 from app.modules.chat.schemas import (
+    ArchiveDraft,
+    ChangeProposal,
     ChatAction,
     ChatRequest,
+    DosageChangeDraft,
     MedicationDraft,
     PendingAction,
     ScheduleDraft,
     ScheduleProposal,
+    TimesChangeDraft,
     WatchChatReply,
     WatchChatRequest,
 )
 from app.modules.consents.service import ConsentService
+from app.modules.doses.history import HistoryEntry, count
 from app.modules.doses.loader import load_history
 from app.modules.medications.repository import MedicationRepository
 from app.modules.medications.schemas import DeviceMedicationCreate, ScheduleCreate
@@ -74,6 +80,7 @@ logger = get_logger(__name__)
 
 _STATUS_LABELS = {"TAKEN": "tomada", "SKIPPED": "omitida", "MISSED": "sin registrar"}
 PENDING_ACTION_TTL_SECONDS = 600
+ADHERENCE_DAYS = 30  # el prompt lleva la adherencia del mes y de los últimos 30 días
 
 # Lo que escribe el servidor (no el modelo) en el reloj, en el idioma de la cuenta.
 _TEXTS: dict[Lang, dict[str, str]] = {
@@ -83,6 +90,12 @@ _TEXTS: dict[Lang, dict[str, str]] = {
         "confirm": "{}. ¿Lo confirmas?",
         "not_understood": "No entendí bien el medicamento o la hora. ¿Me lo repites?",
         "done": "Listo, agregué {}.",
+        "update_schedule": "Cambiar {} a las {}",
+        "update_dosage": "Cambiar la dosis de {} de {} a {}",
+        "archive_medication": "Dejar de recordar {} {}",
+        "schedule_updated": "Listo, {} ahora suena a las {}.",
+        "dosage_updated": "Listo, la dosis de {} ahora es {}.",
+        "medication_archived": "Listo, ya no recordaré {}. Su historial se conserva.",
     },
     "en": {
         "propose_medication": "I'll add {}. Do you confirm?",
@@ -90,6 +103,12 @@ _TEXTS: dict[Lang, dict[str, str]] = {
         "confirm": "{}. Do you confirm?",
         "not_understood": "I didn't catch the medication or the time. Could you say it again?",
         "done": "Done, I added {}.",
+        "update_schedule": "Change {} to {}",
+        "update_dosage": "Change the dose of {} from {} to {}",
+        "archive_medication": "Stop reminding {} {}",
+        "schedule_updated": "Done, {} now rings at {}.",
+        "dosage_updated": "Done, the dose of {} is now {}.",
+        "medication_archived": "Done, I will not remind you of {} anymore. Its history is kept.",
     },
 }
 
@@ -149,12 +168,16 @@ class ChatService:
     async def _prompt(self, patient: Patient, now: datetime, *, short: bool) -> str:
         tz = ZoneInfo(patient.timezone)
         today = local_today(tz, now)
+        yesterday = today - timedelta(days=1)
         rules = await self._plan.rules(
-            patient.id, today, today + timedelta(days=1), include_archived=False
+            patient.id, yesterday, today + timedelta(days=1), include_archived=False
         )
+        first = min(today - timedelta(days=ADHERENCE_DAYS - 1), today.replace(day=1))
+        history = await load_history(self._session, patient, first, today, now)
         done = {
             (e.schedule_id, e.scheduled_at.astimezone(UTC)): _STATUS_LABELS[e.status]
-            for e in await load_history(self._session, patient, today, today, now)
+            for e in history
+            if e.scheduled_at.date() >= yesterday
         }
         doses = sorted(
             (
@@ -168,7 +191,10 @@ class ChatService:
                     ),
                 )
                 for rule in rules
-                for dose in doses_in_range(rule, tz, today, today + timedelta(days=1))
+                for dose in doses_in_range(rule, tz, yesterday, today + timedelta(days=1))
+                # Lo de ayer sin evento ni MISSED (antes de `effective_from`) no se muestra.
+                if dose.scheduled_at.date() >= today
+                or (rule.schedule_id, dose.scheduled_at.astimezone(UTC)) in done
             ),
             key=lambda d: d.at.astimezone(UTC),
         )
@@ -183,7 +209,13 @@ class ChatService:
                 patient.id, today, MAX_MEDICATIONS_IN_CONTEXT
             )
         ]
-        return build_system_prompt(now.astimezone(tz), doses, short=short, medications=medications)
+        return build_system_prompt(
+            now.astimezone(tz),
+            doses,
+            short=short,
+            medications=medications,
+            adherence=_adherence(history, today),
+        )
 
     async def _lang(self, patient: Patient) -> Lang:
         """Idioma de la cuenta del paciente o, si es gestionado, de quien lo creó."""
@@ -308,7 +340,7 @@ class ChatService:
                 system,
                 turns,
                 max_tokens=self._settings.chat_watch_max_tokens,
-                tools=[CREATE_MEDICATION_TOOL, ADD_SCHEDULE_TOOL],
+                tools=WATCH_TOOLS,
             ):
                 if event.text:
                     text.append(event.text)
@@ -326,7 +358,10 @@ class ChatService:
                 pending = await self._propose(device.id, patient, draft, now, lang)
                 reply = text_for["propose_medication"].format(pending.summary)
                 break
-            pending = await self._propose_schedule(device.id, patient, draft, now, lang)
+            if isinstance(draft, ScheduleDraft):
+                pending = await self._propose_schedule(device.id, patient, draft, now, lang)
+            else:
+                pending = await self._propose_change(device.id, patient, draft, lang)
             if pending is not None:
                 reply = text_for["confirm"].format(pending.summary)
                 break
@@ -385,6 +420,16 @@ class ChatService:
         used = await self._usage.messages(device_id, local_today(ZoneInfo(patient.timezone), now))
         remaining = max(self._settings.chat_daily_messages - used, 0)
         stored = json.loads(raw)
+        if stored.get("type") in _CHANGE_TYPES:
+            return await self._confirm_change(
+                device_id,
+                patient,
+                action_id,
+                ChangeProposal.model_validate(stored),
+                remaining,
+                now,
+                lang,
+            )
         if stored.get("type") == "add_schedule":
             return await self._confirm_schedule(
                 device_id,
@@ -470,6 +515,119 @@ class ChatService:
             ],
         )
 
+    async def _propose_change(
+        self,
+        device_id: uuid.UUID,
+        patient: Patient,
+        draft: TimesChangeDraft | DosageChangeDraft | ArchiveDraft,
+        lang: Lang,
+    ) -> PendingAction | None:
+        """Cambio sobre un medicamento que ya existe: se guarda sin aplicar hasta que el reloj lo
+        confirme. Si no es del paciente o está archivado, la llamada se ignora (None)."""
+        medication = await self._medications.get(patient.id, draft.medication_id)
+        if medication is None or medication.archived_at is not None:
+            return None
+        text_for = _TEXTS[lang]
+        if isinstance(draft, TimesChangeDraft):
+            proposal = ChangeProposal(
+                type="update_schedule",
+                medication_id=medication.id,
+                times=draft.times,
+                days_of_week=draft.days_of_week,
+                description=text_for["update_schedule"].format(
+                    f"{medication.name} {medication.dosage}",
+                    _when_times(draft.times, draft.days_of_week, lang),
+                ),
+            )
+        elif isinstance(draft, DosageChangeDraft):
+            proposal = ChangeProposal(
+                type="update_dosage",
+                medication_id=medication.id,
+                dosage=draft.dosage,
+                description=text_for["update_dosage"].format(
+                    medication.name, medication.dosage, draft.dosage
+                ),
+            )
+        else:
+            proposal = ChangeProposal(
+                type="archive_medication",
+                medication_id=medication.id,
+                description=text_for["archive_medication"].format(
+                    medication.name, medication.dosage
+                ),
+            )
+        action_id = uuid.uuid4()
+        await self._redis.set(
+            _action_key(device_id, action_id),
+            proposal.model_dump_json(by_alias=True),
+            ex=PENDING_ACTION_TTL_SECONDS,
+        )
+        return PendingAction(id=action_id, type=proposal.type, summary=proposal.description)
+
+    async def _confirm_change(
+        self,
+        device_id: uuid.UUID,
+        patient: Patient,
+        action_id: uuid.UUID,
+        proposal: ChangeProposal,
+        remaining: int,
+        now: datetime,
+        lang: Lang,
+    ) -> WatchChatReply:
+        """Aplica el cambio una sola vez: reintentar la confirmación devuelve el mismo resultado."""
+        medication = await self._medications.get(patient.id, proposal.medication_id)
+        if medication is None:
+            raise NotFoundError(
+                "chat_action_not_found", "La propuesta caducó o no existe. Pídela de nuevo."
+            )
+        name = medication.name
+        schedule_id = proposal.schedule_id
+        if not proposal.done:
+            service = MedicationService(self._session)
+            if proposal.type == "update_schedule":
+                schedule = await service.replace_times_from_device(
+                    patient.id,
+                    proposal.medication_id,
+                    proposal.times or [],
+                    proposal.days_of_week or [1, 2, 3, 4, 5, 6, 7],
+                    local_today(ZoneInfo(patient.timezone), now),
+                )
+                schedule_id = schedule.id
+            elif proposal.type == "update_dosage":
+                await service.update_dosage_from_device(
+                    patient.id, proposal.medication_id, proposal.dosage or ""
+                )
+            else:
+                await service.archive_from_device(patient.id, proposal.medication_id)
+            ttl = await self._redis.ttl(_action_key(device_id, action_id))
+            done = proposal.model_copy(update={"done": True, "schedule_id": schedule_id})
+            await self._redis.set(
+                _action_key(device_id, action_id),
+                done.model_dump_json(by_alias=True),
+                ex=max(ttl, 1),
+            )
+        text_for = _TEXTS[lang]
+        if proposal.type == "update_schedule":
+            action_type: ActionType = "schedule_updated"
+            reply = text_for["schedule_updated"].format(
+                name, _when_times(proposal.times or [], proposal.days_of_week or [], lang)
+            )
+        elif proposal.type == "update_dosage":
+            action_type = "dosage_updated"
+            reply = text_for["dosage_updated"].format(name, proposal.dosage)
+        else:
+            action_type = "medication_archived"
+            reply = text_for["medication_archived"].format(name)
+        return WatchChatReply(
+            reply=reply,
+            remaining_messages=remaining,
+            actions=[
+                ChatAction(
+                    type=action_type, medication_id=proposal.medication_id, schedule_id=schedule_id
+                )
+            ],
+        )
+
     async def _save(
         self, device_id: uuid.UUID, action_id: uuid.UUID, proposal: ScheduleProposal, ttl: int
     ) -> None:
@@ -478,18 +636,61 @@ class ChatService:
         )
 
 
+def _counts(entries: list[HistoryEntry]) -> PromptCounts:
+    c = count(entries)
+    return PromptCounts(c.taken, c.skipped, c.missed)
+
+
+def _adherence(history: list[HistoryEntry], today: date) -> PromptAdherence:
+    """Recuentos para el prompt a partir del historial (ya con las no registradas calculadas)."""
+
+    def since(first: date) -> list[HistoryEntry]:
+        return [e for e in history if e.scheduled_at.date() >= first]
+
+    last30 = since(today - timedelta(days=ADHERENCE_DAYS - 1))
+    by_medication: dict[str, list[HistoryEntry]] = {}
+    for entry in last30:
+        by_medication.setdefault(entry.medication_name, []).append(entry)
+    week_days = [today - timedelta(days=back) for back in range(6, -1, -1)]
+    return PromptAdherence(
+        week=_counts(since(week_days[0])),
+        month=_counts(since(today.replace(day=1))),
+        last30=_counts(last30),
+        by_medication=[(name, _counts(rows)) for name, rows in sorted(by_medication.items())],
+        by_day=[
+            (day, _counts([e for e in history if e.scheduled_at.date() == day]))
+            for day in week_days
+        ],
+    )
+
+
 def _action_key(device_id: uuid.UUID, action_id: uuid.UUID) -> str:
     # Con el reloj en la clave, la propuesta de un reloj no la confirma otro.
     return f"chat:action:{device_id}:{action_id}"
 
 
-def _drafts(calls: list[ToolCall]) -> list[MedicationDraft | ScheduleDraft]:
+_CHANGE_TYPES = ("update_schedule", "update_dosage", "archive_medication")
+
+Draft = MedicationDraft | ScheduleDraft | TimesChangeDraft | DosageChangeDraft | ArchiveDraft
+ActionType = Literal["schedule_updated", "dosage_updated", "medication_archived"]
+
+
+def _when_times(times: list[str], days: list[int], lang: Lang) -> str:
+    """'09:00 y 21:00 todos los días': solo la parte de horas y días de la descripción."""
+    full = describe_medication("X", "Y", times, days, lang)
+    return full.removeprefix("X Y a las ").removeprefix("X Y at ")
+
+
+def _drafts(calls: list[ToolCall]) -> list[Draft]:
     """Las llamadas con argumentos válidos, en orden; las demás se ignoran."""
-    models: dict[str, type[MedicationDraft] | type[ScheduleDraft]] = {
+    models: dict[str, type[Draft]] = {
         "create_medication": MedicationDraft,
         "add_schedule": ScheduleDraft,
+        "update_schedule": TimesChangeDraft,
+        "update_dosage": DosageChangeDraft,
+        "archive_medication": ArchiveDraft,
     }
-    drafts: list[MedicationDraft | ScheduleDraft] = []
+    drafts: list[Draft] = []
     for call in calls:
         model = models.get(call.name)
         if model is None:

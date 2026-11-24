@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: API de recordatorios de medicamentos
-  version: 0.13.0
+  version: 0.14.0
   x-closed-phase: 3
   description: |
     Contrato de la API. Fuente de verdad del backend y de los clientes generados por el frontend
@@ -63,6 +63,14 @@ info:
       batería del reloj y deshacer una toma registrada.
 
     Cambios por versión:
+    - 0.14.0: el asistente conoce la adherencia (7 días, el mes, 30 días, por medicamento y día
+      por día) y las dosis de ayer, y explica cómo se usa la app. En el reloj también puede
+      proponer cambiar las horas de un medicamento (`pendingAction.type: update_schedule`), su
+      dosis (`update_dosage`) o dejar de recordarlo (`archive_medication`); al confirmar,
+      `actions[].type` es `schedule_updated`, `dosage_updated` o `medication_archived`, y
+      `actions[].scheduleId` es `null` si el cambio no toca horarios. Los valores nuevos de enum y
+      el `null` en las respuestas son un cambio acordado con el frontend
+      (`contracts/oasdiff-ignore.txt`).
     - 0.13.0: `Locale` admite `en`. El asistente responde en el idioma en que le escriben;
       los textos que arma el servidor (resúmenes y confirmaciones del reloj) y los avisos por
       correo y Telegram siguen el `locale` de la cuenta. El valor nuevo de enum en las
@@ -3372,22 +3380,31 @@ components:
           format: uuid
         type:
           type: string
-          enum: [create_medication, add_schedule]
+          enum: [create_medication, add_schedule, update_schedule, update_dosage, archive_medication]
         summary:
           type: string
           examples:
             - "Losartán 50 mg a las 08:00 todos los días"
             - "Agregar a Metformina 850 mg las 14:00 todos los días"
+            - "Cambiar Metformina 850 mg a las 09:00 y 21:00 todos los días"
+            - "Cambiar la dosis de Losartán de 50 mg a 100 mg"
+            - "Dejar de recordar Vitamina D 1 cápsula"
     ChatAction:
       type: object
       required: [type, medicationId, scheduleId]
       properties:
         type:
           type: string
-          enum: [medication_created, schedule_added]
+          enum:
+            - medication_created
+            - schedule_added
+            - schedule_updated
+            - dosage_updated
+            - medication_archived
         medicationId:
           type: string
           format: uuid
         scheduleId:
-          type: string
+          type: [string, "null"]
           format: uuid
+          description: Horario creado o cambiado; `null` si el cambio no toca horarios.

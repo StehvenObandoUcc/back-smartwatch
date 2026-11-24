@@ -787,3 +787,167 @@ async def test_watch_texts_follow_the_account_language(
     assert created.json()["reply"].startswith("I'll add ")
     done = await _confirm(client, watch, created.json()["pendingAction"]["id"])
     assert done.json()["reply"].startswith("Done, I added ")
+
+
+# ─── Reloj: cambiar horas, cambiar dosis y dejar de recordar ─────────────────
+
+
+def _call(name: str, **args: Any) -> ToolCall:
+    return ToolCall(name, json.dumps(args))
+
+
+async def _medication_out(
+    client: AsyncClient, owner: Session, patient_id: str, medication_id: str
+) -> dict[str, Any]:
+    response = await client.get(
+        f"/patients/{patient_id}/medications/{medication_id}", headers=bearer(owner)
+    )
+    body: dict[str, Any] = response.json()
+    return body
+
+
+async def test_watch_assistant_changes_the_times_after_confirmation(
+    chat: tuple[AsyncClient, ScriptedProvider],
+) -> None:
+    client, provider = chat
+    owner, patient_id = await _patient(client)
+    medication = await _medication(client, owner, patient_id, dosage="850 mg")
+    await _schedule(client, owner, patient_id, medication["id"], times=["08:00", "20:00"])
+    await _schedule(client, owner, patient_id, medication["id"], times=["14:00"])
+    watch = await _watch(client, owner, patient_id)
+    provider.chunks = []
+    provider.tool_calls = [
+        _call("update_schedule", medicationId=medication["id"], times=["09:00", "21:00"])
+    ]
+
+    proposal = await _ask_watch(client, watch, message="cambia la metformina a las 9 y a las 21")
+
+    assert proposal.status_code == 200, proposal.text
+    pending = proposal.json()["pendingAction"]
+    assert pending["type"] == "update_schedule"
+    assert pending["summary"] == "Cambiar Metformina 850 mg a las 09:00 y 21:00 todos los días"
+    assert proposal.json()["reply"] == f"{pending['summary']}. ¿Lo confirmas?"
+    assert len(await _schedules(client, owner, patient_id, medication["id"])) == 2  # nada aún
+    plan = await client.get("/devices/me/plan", headers=watch)
+
+    confirmed = await _confirm(client, watch, pending["id"])
+
+    assert confirmed.status_code == 200, confirmed.text
+    body = confirmed.json()
+    assert body["reply"] == "Listo, Metformina ahora suena a las 09:00 y 21:00 todos los días."
+    [action] = body["actions"]
+    assert action["type"] == "schedule_updated"
+    [schedule] = await _schedules(client, owner, patient_id, medication["id"])
+    assert schedule["times"] == ["09:00", "21:00"]
+    assert action["scheduleId"] == schedule["id"]
+    replan = await client.get(
+        "/devices/me/plan", headers={**watch, "If-None-Match": plan.headers["ETag"]}
+    )
+    assert replan.status_code == 200  # el plan cambió
+
+    again = await _confirm(client, watch, pending["id"])
+    assert again.json()["actions"] == body["actions"]  # reintentar no repite el cambio
+    assert len(await _schedules(client, owner, patient_id, medication["id"])) == 1
+
+
+async def test_watch_assistant_changes_the_dosage_after_confirmation(
+    chat: tuple[AsyncClient, ScriptedProvider],
+) -> None:
+    client, provider = chat
+    owner, patient_id = await _patient(client)
+    medication = await _medication(client, owner, patient_id, name="Losartán", dosage="50 mg")
+    watch = await _watch(client, owner, patient_id)
+    provider.chunks = []
+    provider.tool_calls = [_call("update_dosage", medicationId=medication["id"], dosage="100 mg")]
+
+    proposal = await _ask_watch(client, watch, message="la dosis del losartán ahora es 100 mg")
+
+    pending = proposal.json()["pendingAction"]
+    assert pending["type"] == "update_dosage"
+    assert pending["summary"] == "Cambiar la dosis de Losartán de 50 mg a 100 mg"
+    assert (await _medication_out(client, owner, patient_id, medication["id"]))["dosage"] == (
+        "50 mg"
+    )
+
+    confirmed = await _confirm(client, watch, pending["id"])
+
+    assert confirmed.json()["reply"] == "Listo, la dosis de Losartán ahora es 100 mg."
+    [action] = confirmed.json()["actions"]
+    assert action == {
+        "type": "dosage_updated",
+        "medicationId": medication["id"],
+        "scheduleId": None,
+    }
+    assert (await _medication_out(client, owner, patient_id, medication["id"]))["dosage"] == (
+        "100 mg"
+    )
+
+
+async def test_watch_assistant_stops_a_medication_keeping_its_history(
+    chat: tuple[AsyncClient, ScriptedProvider],
+) -> None:
+    client, provider = chat
+    owner, patient_id = await _patient(client)
+    medication = await _medication(client, owner, patient_id, name="Vitamina D")
+    await _schedule(client, owner, patient_id, medication["id"], times=["13:00"])
+    watch = await _watch(client, owner, patient_id)
+    provider.chunks = []
+    provider.tool_calls = [_call("archive_medication", medicationId=medication["id"])]
+
+    proposal = await _ask_watch(client, watch, message="ya no tomo la vitamina D")
+
+    pending = proposal.json()["pendingAction"]
+    assert pending["type"] == "archive_medication"
+    assert pending["summary"] == "Dejar de recordar Vitamina D 1 tableta"
+    assert len(await _medications(client, owner, patient_id)) == 1
+
+    confirmed = await _confirm(client, watch, pending["id"])
+
+    assert confirmed.json()["reply"] == (
+        "Listo, ya no recordaré Vitamina D. Su historial se conserva."
+    )
+    assert confirmed.json()["actions"][0]["type"] == "medication_archived"
+    assert await _medications(client, owner, patient_id) == []  # archivado, no borrado
+    archived = await _medication_out(client, owner, patient_id, medication["id"])
+    assert archived["archived"] is True
+
+
+async def test_change_calls_on_foreign_or_archived_medications_are_ignored(
+    chat: tuple[AsyncClient, ScriptedProvider],
+) -> None:
+    client, provider = chat
+    owner, patient_id = await _patient(client)
+    archived = await _medication(client, owner, patient_id, name="Aspirina")
+    await client.delete(
+        f"/patients/{patient_id}/medications/{archived['id']}", headers=bearer(owner)
+    )
+    watch = await _watch(client, owner, patient_id)
+    provider.chunks = []
+    provider.tool_calls = [
+        _call("update_dosage", medicationId=archived["id"], dosage="1 g"),
+        _call("archive_medication", medicationId="00000000-0000-0000-0000-000000000001"),
+    ]
+
+    reply = await _ask_watch(client, watch, message="cambia la aspirina")
+
+    assert reply.status_code == 200, reply.text
+    assert reply.json()["pendingAction"] is None
+    assert reply.json()["reply"] == "No entendí bien el medicamento o la hora. ¿Me lo repites?"
+
+
+async def test_the_model_sees_adherence_and_yesterday(
+    chat: tuple[AsyncClient, ScriptedProvider],
+) -> None:
+    client, provider = chat
+    owner, patient_id = await _patient(client)
+    await _with_plan(client, owner, patient_id)
+    watch = await _watch(client, owner, patient_id)
+
+    await _ask_watch(client, watch, message="¿qué porcentaje llevo?")
+
+    system = provider.calls[0]["system"]
+    assert "Adherencia:" in system
+    assert "- Últimos 7 días:" in system
+    assert "Por medicamento" not in system  # aún sin dosis vencidas
+    assert "Últimos 7 días, día por día:" in system
+    assert provider.calls[0]["tools"][-1]["function"]["name"] == "archive_medication"

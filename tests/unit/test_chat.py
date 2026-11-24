@@ -1,6 +1,6 @@
 import json
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 from zoneinfo import ZoneInfo
 
 import httpx2
@@ -11,6 +11,9 @@ from app.core.config import Settings
 from app.modules.chat.prompt import (
     ADD_SCHEDULE_TOOL,
     CREATE_MEDICATION_TOOL,
+    WATCH_TOOLS,
+    PromptAdherence,
+    PromptCounts,
     PromptDose,
     PromptMedication,
     build_system_prompt,
@@ -26,7 +29,14 @@ from app.modules.chat.provider import (
     ToolCall,
     Turn,
 )
-from app.modules.chat.schemas import MedicationDraft, ScheduleDraft, WatchChatRequest
+from app.modules.chat.schemas import (
+    ArchiveDraft,
+    DosageChangeDraft,
+    MedicationDraft,
+    ScheduleDraft,
+    TimesChangeDraft,
+    WatchChatRequest,
+)
 from app.modules.chat.service import _drafts
 
 BOGOTA = ZoneInfo("America/Bogota")
@@ -429,3 +439,88 @@ def test_summaries_follow_the_account_language() -> None:
     assert describe_schedule("Metformina", "850 mg", ["14:00"], every_day, "es") == (
         "a Metformina 850 mg las 14:00 todos los días"
     )
+
+
+# ─── Adherencia, ayuda y cambios desde el reloj ───────────────────────────────
+
+
+def _adherence() -> PromptAdherence:
+    week = PromptCounts(taken=27, skipped=1, missed=1)
+    return PromptAdherence(
+        week=week,
+        month=PromptCounts(taken=90, skipped=2, missed=3),
+        last30=PromptCounts(taken=110, skipped=3, missed=7),
+        by_medication=[
+            ("Metformina", PromptCounts(55, 1, 4)),
+            ("Losartán", PromptCounts(30, 0, 0)),
+        ],
+        by_day=[
+            (date(2026, 10, 6), PromptCounts(4, 0, 0)),
+            (date(2026, 10, 7), PromptCounts(0, 0, 0)),
+        ],
+    )
+
+
+def test_prompt_carries_the_adherence_numbers() -> None:
+    prompt = build_system_prompt(NOW, [], short=True, adherence=_adherence())
+
+    assert "- Últimos 7 días: 93 % (27 tomadas, 1 omitidas, 1 sin registrar, de 29)" in prompt
+    assert "- Este mes (octubre): 95 %" in prompt
+    assert "- Últimos 30 días: 92 %" in prompt
+    assert "- Metformina: 92 % (55 tomadas" in prompt
+    assert "- Losartán: 100 %" in prompt
+    assert "- mar 06/10: 100 %" in prompt
+    assert "- mié 07/10: sin dosis vencidas" in prompt
+    assert "tomadas ÷ (tomadas + omitidas + sin registrar)" in prompt
+
+
+def test_prompt_without_adherence_has_no_section() -> None:
+    assert "Adherencia:" not in build_system_prompt(NOW, [], short=False)
+
+
+def test_prompt_labels_yesterday_doses() -> None:
+    prompt = build_system_prompt(NOW, [_dose(20, "sin registrar", day=6)], short=False)
+
+    assert "- ayer 20:00: Metformina, 1 tableta — sin registrar" in prompt
+
+
+def test_prompt_explains_how_to_use_the_app() -> None:
+    for short in (True, False):
+        prompt = build_system_prompt(NOW, [], short=short)
+        assert "Posponer (10 minutos, hasta 3 veces)" in prompt
+        assert "Medicinas" in prompt
+
+
+def test_only_the_watch_can_change_medications() -> None:
+    names = [tool["function"]["name"] for tool in WATCH_TOOLS]
+
+    assert names == [
+        "create_medication",
+        "add_schedule",
+        "update_schedule",
+        "update_dosage",
+        "archive_medication",
+    ]
+    for name in ("update_schedule", "update_dosage", "archive_medication"):
+        assert name in build_system_prompt(NOW, [], short=True)
+        assert name not in build_system_prompt(NOW, [], short=False)
+
+
+def test_change_tool_calls_become_validated_drafts() -> None:
+    med = str(uuid.UUID(int=9))
+    calls = [
+        ToolCall("update_schedule", json.dumps({"medicationId": med, "times": ["09:00", "21:00"]})),
+        ToolCall("update_dosage", json.dumps({"medicationId": med, "dosage": "100 mg"})),
+        ToolCall("archive_medication", json.dumps({"medicationId": med})),
+        ToolCall("update_schedule", json.dumps({"medicationId": med, "times": ["25:00"]})),
+        ToolCall("update_dosage", json.dumps({"medicationId": "no-es-uuid", "dosage": "1"})),
+    ]
+
+    times, dosage, archive = _drafts(calls)
+
+    assert isinstance(times, TimesChangeDraft)
+    assert times.times == ["09:00", "21:00"]
+    assert times.days_of_week == [1, 2, 3, 4, 5, 6, 7]
+    assert isinstance(dosage, DosageChangeDraft)
+    assert dosage.dosage == "100 mg"
+    assert isinstance(archive, ArchiveDraft)

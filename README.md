@@ -8,7 +8,7 @@
 ![FastAPI](https://img.shields.io/badge/FastAPI-async-009688?logo=fastapi&logoColor=white)
 ![PostgreSQL](https://img.shields.io/badge/PostgreSQL-17-4169E1?logo=postgresql&logoColor=white)
 ![Redis](https://img.shields.io/badge/Redis-7-DC382D?logo=redis&logoColor=white)
-![OpenAPI](https://img.shields.io/badge/OpenAPI-0.13.0-6BA539?logo=openapiinitiative&logoColor=white)
+![OpenAPI](https://img.shields.io/badge/OpenAPI-0.14.0-6BA539?logo=openapiinitiative&logoColor=white)
 
 </div>
 

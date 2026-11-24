@@ -4,3 +4,10 @@ PATCH /users/me added the new `en` enum value to the `locale` response property 
 GET /users/me added the new `en` enum value to the `locale` response property for the response status `200`
 POST /auth/register added the new `en` enum value to the `user/locale` response property for the response status `201`
 POST /auth/login added the new `en` enum value to the `user/locale` response property for the response status `200`
+POST /devices/me/chat/messages added the new `update_schedule` enum value to the `pendingAction/oneOf[#/components/schemas/PendingAction]/type` response property for the response status `200`
+POST /devices/me/chat/messages added the new `update_dosage` enum value to the `pendingAction/oneOf[#/components/schemas/PendingAction]/type` response property for the response status `200`
+POST /devices/me/chat/messages added the new `archive_medication` enum value to the `pendingAction/oneOf[#/components/schemas/PendingAction]/type` response property for the response status `200`
+POST /devices/me/chat/messages added the new `schedule_updated` enum value to the `actions/items/type` response property for the response status `200`
+POST /devices/me/chat/messages added the new `dosage_updated` enum value to the `actions/items/type` response property for the response status `200`
+POST /devices/me/chat/messages added the new `medication_archived` enum value to the `actions/items/type` response property for the response status `200`
+POST /devices/me/chat/messages the `actions/items/scheduleId` response property type/format changed from `string`/`uuid` to `string, null`/`uuid` for status `200`

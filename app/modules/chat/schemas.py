@@ -39,16 +39,25 @@ class WatchChatRequest(ApiModel):
         return self
 
 
+ChangeType = Literal["update_schedule", "update_dosage", "archive_medication"]
+
+
 class PendingAction(ApiModel):
     id: uuid.UUID
-    type: Literal["create_medication", "add_schedule"] = "create_medication"
+    type: Literal["create_medication", "add_schedule"] | ChangeType = "create_medication"
     summary: str
 
 
 class ChatAction(ApiModel):
-    type: Literal["medication_created", "schedule_added"] = "medication_created"
+    type: Literal[
+        "medication_created",
+        "schedule_added",
+        "schedule_updated",
+        "dosage_updated",
+        "medication_archived",
+    ] = "medication_created"
     medication_id: uuid.UUID
-    schedule_id: uuid.UUID
+    schedule_id: uuid.UUID | None  # null si el cambio no toca horarios (dosis, archivar)
 
 
 class WatchChatReply(ApiModel):
@@ -84,3 +93,38 @@ class ScheduleProposal(ApiModel):
     schedule: ScheduleCreate
     description: str  # 'a Metformina 850 mg las 14:00 todos los días'
     schedule_id: uuid.UUID | None = None
+
+
+class TimesChangeDraft(ApiModel):
+    """Argumentos de `update_schedule`: las horas (y días) nuevas de un medicamento."""
+
+    medication_id: uuid.UUID
+    times: Times
+    days_of_week: Days = Field(default_factory=lambda: [1, 2, 3, 4, 5, 6, 7])
+
+
+class DosageChangeDraft(ApiModel):
+    """Argumentos de `update_dosage`."""
+
+    medication_id: uuid.UUID
+    dosage: Dosage
+
+
+class ArchiveDraft(ApiModel):
+    """Argumentos de `archive_medication`."""
+
+    medication_id: uuid.UUID
+
+
+class ChangeProposal(ApiModel):
+    """Lo que se guarda en Redis para un cambio sobre un medicamento existente. Tras confirmar se
+    guarda con `done`, para que reintentar la confirmación no lo repita."""
+
+    type: ChangeType
+    medication_id: uuid.UUID
+    description: str  # 'Metformina 850 mg a las 09:00 y 21:00 todos los días'
+    times: list[str] | None = None
+    days_of_week: list[int] | None = None
+    dosage: str | None = None
+    schedule_id: uuid.UUID | None = None
+    done: bool = False
